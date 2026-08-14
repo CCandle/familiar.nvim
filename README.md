@@ -20,7 +20,9 @@ The current vertical slice already provides:
 - deterministic reactions to typing, idle time, diagnostics, and rapid buffer switching;
 - a small fox with idle/blink, attention, walk/run, sleep, appear, and vanish frames;
 - conservative safe placement that hides the familiar when the current window is too dense;
-- a lifecycle-bound Rust sidecar with a Lua fallback.
+- a lifecycle-bound Rust sidecar with a Lua fallback;
+- avatar validation for palette, sprite, and animation-graph consistency;
+- an explicit animation demo command for real-terminal visual inspection.
 
 Planned behavior includes richer screen-edge entry/exit, compact/peek display modes, Markdown/LaTeX structural awareness, declarative avatar packs, and eventually a tiny constrained local model.
 
@@ -42,8 +44,9 @@ Lua frontend
   | JSONL over stdio
   v
 Rust familiar-core (child process)
+     - protocol
      - world state
-     - behavior planning
+     - RuleBrain / future Brain implementations
      - spatial / transition planning (growing here over time)
      - memory (planned)
      - tiny local model backend (planned)
@@ -109,7 +112,18 @@ For local development, point lazy.nvim directly at a checkout:
 - `:FamiliarStop`
 - `:FamiliarToggle`
 - `:FamiliarStatus`
+- `:FamiliarDemo <animation> [duration_ms]`
 - `:checkhealth familiar`
+
+`FamiliarDemo` is intended for development/visual QA. For example:
+
+```vim
+:FamiliarDemo idle 5000
+:FamiliarDemo inspect 5000
+:FamiliarDemo walk 3000
+:FamiliarDemo sleep 5000
+:FamiliarDemo appear 1500
+```
 
 No default keymaps are installed.
 
