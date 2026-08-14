@@ -29,15 +29,22 @@ local function create_commands()
     if not runtime.status().running then
       runtime.start(config)
     end
-    local ok, err = runtime.demo(opts.args, opts.count > 0 and opts.count or nil)
+    local animation = opts.fargs[1]
+    local duration_ms = opts.fargs[2] and tonumber(opts.fargs[2]) or nil
+    if opts.fargs[2] and not duration_ms then
+      vim.notify("familiar demo: duration must be milliseconds", vim.log.levels.WARN)
+      return
+    end
+    local ok, err = runtime.demo(animation, duration_ms)
     if not ok then
       vim.notify("familiar demo: " .. tostring(err), vim.log.levels.WARN)
     end
   end, {
-    nargs = 1,
-    count = true,
-    desc = "Temporarily force one avatar animation (count = duration ms)",
-    complete = function()
+    nargs = "+",
+    desc = "Temporarily force one avatar animation: :FamiliarDemo <animation> [duration_ms]",
+    complete = function(_, cmdline)
+      local _, spaces = cmdline:gsub(" ", "")
+      if spaces > 1 then return {} end
       return runtime.animation_names(config)
     end,
   })
