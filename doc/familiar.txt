@@ -1,0 +1,138 @@
+*familiar.nvim*             Pixel-art familiar for Neovim
+
+===============================================================================
+CONTENTS                                                     *familiar-contents*
+
+1. Introduction ........................................ |familiar-introduction|
+2. Requirements ........................................ |familiar-requirements|
+3. Setup ................................................ |familiar-setup|
+4. Commands ............................................. |familiar-commands|
+5. Architecture ......................................... |familiar-architecture|
+6. Current limitations .................................. |familiar-limitations|
+
+===============================================================================
+1. Introduction                                           *familiar-introduction*
+
+familiar.nvim is an experimental terminal-native pixel-art companion. It lives
+inside the editor without modifying file buffers, opening a chat UI, or
+producing free-form dialogue.
+
+The default avatar is a small fox. Current behavior reacts deterministically to
+basic editor state such as typing, diagnostics, idle time, viewport space, and
+rapid buffer switching. A constrained local AI policy is planned, but is not a
+current runtime dependency.
+
+===============================================================================
+2. Requirements                                             *familiar-requirements*
+
+- Neovim >= 0.12
+- true-color terminal recommended
+- lazy.nvim is the currently documented installation path
+- Rust/Cargo is required only when building the optional familiar-core sidecar
+
+No Ollama process or permanent daemon is required.
+
+===============================================================================
+3. Setup                                                           *familiar-setup*
+
+Example lazy.nvim spec: >lua
+
+  {
+    "CCandle/familiar.nvim",
+    event = "VeryLazy",
+    build = "cargo build --release -p familiar-core",
+    opts = {},
+  }
+<
+
+Equivalent explicit setup: >lua
+
+  require("familiar").setup({
+    enabled = true,
+    debug = false,
+    core = {
+      enabled = true,
+      bin = nil,
+    },
+    render = {
+      frame_ms = 125,
+      margin = 1,
+      min_width = 48,
+      min_height = 12,
+      move_step = 2,
+      warp_distance = 32,
+    },
+    telemetry = {
+      snapshot_ms = 1200,
+      max_visible_lines = 120,
+    },
+  })
+<
+
+The public configuration surface is intentionally small during early
+development.
+
+===============================================================================
+4. Commands                                                     *familiar-commands*
+
+:FamiliarStart                                                *:FamiliarStart*
+    Start the familiar runtime if it is not already running.
+
+:FamiliarStop                                                  *:FamiliarStop*
+    Stop animation, telemetry, renderer resources, and the Rust child process.
+
+:FamiliarToggle                                              *:FamiliarToggle*
+    Toggle the runtime.
+
+:FamiliarStatus                                              *:FamiliarStatus*
+    Inspect the current avatar, animation, position, intent, and sidecar state.
+
+:FamiliarDemo {animation} [duration_ms]                        *:FamiliarDemo*
+    Temporarily force an existing avatar animation for visual inspection. This
+    is primarily a development/QA command. Completion lists the current fox
+    animations. The duration defaults to 4000 ms and is bounded internally.
+
+    Examples: >vim
+
+      :FamiliarDemo idle 5000
+      :FamiliarDemo inspect 5000
+      :FamiliarDemo walk 3000
+      :FamiliarDemo sleep 5000
+<
+
+:checkhealth familiar                                      *familiar-health*
+    Check Neovim version, true-color setting, avatar validation, sidecar
+    discovery, and current runtime state.
+
+===============================================================================
+5. Architecture                                               *familiar-architecture*
+
+The Neovim frontend is intentionally Lua-native: autocmds, buffers/windows,
+telemetry, floating render surface, highlights, and child-process lifecycle are
+handled with Neovim APIs.
+
+The optional `familiar-core` Rust child process owns normalized world state and
+behavior policy. It communicates with Lua via versioned JSON Lines over stdio.
+It is not a permanent system service and should exit with Neovim.
+
+Pixel art is represented as indexed logical pixels. Two vertical logical pixels
+are packed into one terminal cell with Unicode half/full block glyphs and
+true-color highlight groups. Runtime PNG/JPG assets are not required.
+
+See the repository `docs/` directory for ADRs, protocol details, avatar-format
+direction, world-model design, and the future tiny-brain contract.
+
+===============================================================================
+6. Current limitations                                         *familiar-limitations*
+
+- The fox art and animation set are provisional.
+- Safe placement currently favors blank space at the right side of the active
+  normal window and does not yet model every virtual-text/UI obstacle.
+- Compact/peek bodies and richer edge-entry/exit transitions are planned.
+- Markdown/LaTeX structural telemetry is designed but not yet implemented.
+- AI inference is intentionally not implemented yet.
+- Visual quality must still be validated in the real terminal/font/theme
+  combination; headless CI cannot prove appearance.
+
+===============================================================================
+vim:tw=78:ts=8:noet:ft=help:norl:
