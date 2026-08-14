@@ -21,7 +21,7 @@ local function touch(typing)
 end
 
 local function prune_switches()
-  local cutoff = now() - 10_000
+  local cutoff = now() - 10000
   local keep = {}
   for _, stamp in ipairs(state.switches) do
     if stamp >= cutoff then
