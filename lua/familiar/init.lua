@@ -24,6 +24,23 @@ local function create_commands()
   vim.api.nvim_create_user_command("FamiliarStatus", function()
     vim.notify(vim.inspect(runtime.status()), vim.log.levels.INFO, { title = "familiar.nvim" })
   end, { desc = "Show familiar.nvim status" })
+
+  vim.api.nvim_create_user_command("FamiliarDemo", function(opts)
+    if not runtime.status().running then
+      runtime.start(config)
+    end
+    local ok, err = runtime.demo(opts.args, opts.count > 0 and opts.count or nil)
+    if not ok then
+      vim.notify("familiar demo: " .. tostring(err), vim.log.levels.WARN)
+    end
+  end, {
+    nargs = 1,
+    count = true,
+    desc = "Temporarily force one avatar animation (count = duration ms)",
+    complete = function()
+      return runtime.animation_names(config)
+    end,
+  })
 end
 
 function M.setup(opts)
@@ -57,6 +74,13 @@ end
 
 function M.toggle()
   runtime.toggle(config)
+end
+
+function M.demo(animation, duration_ms)
+  if not runtime.status().running then
+    runtime.start(config)
+  end
+  return runtime.demo(animation, duration_ms)
 end
 
 function M.status()
