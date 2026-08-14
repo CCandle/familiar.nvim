@@ -8,6 +8,7 @@ local state = {
   width = nil,
   height = nil,
   highlights = {},
+  last_draw = nil,
 }
 
 local function valid_win(win)
@@ -272,6 +273,11 @@ function M.draw(parent, avatar, frame_name, position)
   local frame = avatar.frames[frame_name]
   if not frame then return end
 
+  local draw_key = table.concat({ avatar.id, parent, frame_name, position.x, position.y }, ":")
+  if state.last_draw == draw_key and valid_win(state.win) then
+    return
+  end
+
   define_base_highlight()
   local lines, spans = frame_lines(avatar, frame)
   local win = ensure_window(parent, avatar.width, avatar.height / 2, position.y, position.x)
@@ -301,6 +307,7 @@ function M.draw(parent, avatar, frame_name, position)
       width = avatar.width,
       height = avatar.height / 2,
     })
+    state.last_draw = draw_key
   end
 end
 
@@ -310,6 +317,7 @@ function M.hide()
   end
   state.win = nil
   state.parent = nil
+  state.last_draw = nil
 end
 
 function M.stop()
@@ -319,6 +327,7 @@ function M.stop()
   end
   state.buf = nil
   state.highlights = {}
+  state.last_draw = nil
 end
 
 function M._frame_lines(avatar, frame_name)
