@@ -6,21 +6,25 @@ A tiny pixel-art familiar that lives inside Neovim.
 
 The first avatar is a small fox. The long-term design makes avatars, animations, emotes, personality data, and behavior policy replaceable.
 
-> **Status:** early development. The current repository is a vertical slice for the renderer, lifecycle, telemetry, and Rust sidecar protocol. AI inference is intentionally not implemented yet.
+> **Status:** early development. The current repository is a working vertical slice for the pixel renderer, lifecycle, basic telemetry, deterministic behavior, and Rust sidecar protocol. AI inference is intentionally not implemented yet.
 
 ## What it is
 
-The intended experience is closer to a small game character living in the editor than to a status widget:
+The intended experience is closer to a small game character living in the editor than to a status widget.
 
-- it moves instead of teleporting when practical;
-- it can run in from the screen edge when entering a buffer;
-- large relocations can use disappear/appear transitions;
-- it may sit quietly during sustained writing;
-- it can react to diagnostics, buffer switching, idle time, and document structure;
-- it never speaks;
-- it may use only declared emotes/symbols from the active avatar package.
+The current vertical slice already provides:
 
-The eventual AI is a **constrained behavior director**, not a text generator or renderer.
+- terminal-native indexed pixel art rendered with half-block cells;
+- short-distance walk/run relocation instead of visible coordinate jumps;
+- disappear/appear transitions for large relocations and animated arrival after buffer changes;
+- deterministic reactions to typing, idle time, diagnostics, and rapid buffer switching;
+- a small fox with idle/blink, attention, walk/run, sleep, appear, and vanish frames;
+- conservative safe placement that hides the familiar when the current window is too dense;
+- a lifecycle-bound Rust sidecar with a Lua fallback.
+
+Planned behavior includes richer screen-edge entry/exit, compact/peek display modes, Markdown/LaTeX structural awareness, declarative avatar packs, and eventually a tiny constrained local model.
+
+The familiar never speaks. The eventual AI is a **constrained behavior director**, not a text generator or renderer.
 
 ## Architecture
 
@@ -31,7 +35,7 @@ Neovim
   v
 Lua frontend
   |  - Neovim API integration
-  |  - extmark pixel renderer
+  |  - pixel render surface
   |  - safe placement
   |  - animation presentation
   |
@@ -40,9 +44,9 @@ Lua frontend
 Rust familiar-core (child process)
      - world state
      - behavior planning
-     - spatial / transition planning
-     - memory
-     - later: tiny local model backend
+     - spatial / transition planning (growing here over time)
+     - memory (planned)
+     - tiny local model backend (planned)
 ```
 
 The Rust process is **not a daemon**. Neovim starts it on demand and terminates it on exit. If the sidecar is missing or fails, the Lua renderer remains usable with a deterministic fallback policy.
@@ -51,11 +55,13 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and the ADRs under [`docs/adr
 
 ## Rendering
 
-The default renderer uses indexed logical pixels and Unicode half blocks (`▀`, `▄`, `█`). One terminal cell can represent two vertical logical pixels with independent foreground/background colors. Sprites are therefore stored as text matrices, not PNG/JPG runtime assets.
+The default renderer uses indexed logical pixels and Unicode half blocks (`▀`, `▄`, `█`). One terminal cell represents two vertical logical pixels. Sprites are therefore stored as tiny text matrices rather than PNG/JPG runtime assets.
 
-The current implementation draws into a borderless, non-focusable floating window used purely as an internal render surface. That keeps the sprite in screen coordinates even when Markdown/LaTeX lines wrap. The renderer prefers blank regions and hides when it cannot find a safe location.
+The current implementation draws into a borderless, non-focusable, mouse-transparent floating window used purely as an internal render surface. `winblend` and per-pixel highlight blending keep untouched cells transparent while mixed top/bottom pixel cells stay colored. This keeps the sprite coherent in screen coordinates even when Markdown/LaTeX lines wrap.
 
-The first fox sprite is deliberately small and provisional; the asset format is being designed for later user-authored and AI-generated avatar packs.
+The renderer currently searches for blank space on the right side of the active normal window. Wrapped rows are treated conservatively as occupied. If no safe region exists, the familiar disappears instead of covering the document.
+
+The fox is still provisional art, but the current sprite is a recognizable 16×16 logical-pixel familiar rather than a placeholder status face. The stable external avatar-package format is intentionally deferred until the first visual round reveals what the engine actually needs.
 
 ## Current requirements
 
@@ -82,9 +88,9 @@ For the current development version:
 }
 ```
 
-If Rust is unavailable, omit `build`. The plugin will run the Lua fallback and report that the sidecar is unavailable only when debug logging is enabled.
+If Rust is unavailable, omit `build`. The plugin uses the Lua fallback rather than requiring Ollama or another permanent service.
 
-For local development, lazy.nvim can point directly at a checkout:
+For local development, point lazy.nvim directly at a checkout:
 
 ```lua
 {
@@ -103,6 +109,7 @@ For local development, lazy.nvim can point directly at a checkout:
 - `:FamiliarStop`
 - `:FamiliarToggle`
 - `:FamiliarStatus`
+- `:checkhealth familiar`
 
 No default keymaps are installed.
 
@@ -123,6 +130,13 @@ require("familiar").setup({
     margin = 1,
     min_width = 48,
     min_height = 12,
+    move_step = 2,
+    warp_distance = 32,
+  },
+
+  telemetry = {
+    snapshot_ms = 1200,
+    max_visible_lines = 120,
   },
 })
 ```
@@ -131,13 +145,13 @@ The public configuration surface is intentionally small while the architecture i
 
 ## Development priorities
 
-1. Make the pixel renderer genuinely pleasant in iTerm2.
-2. Make movement/relocation continuous and non-disruptive.
-3. Expand the fox animation graph and avatar package schema.
-4. Make Markdown/LaTeX/editor telemetry first-class, not coding-only.
-5. Benchmark tiny constrained models only after the deterministic runtime is good.
+1. Validate and tune the pixel renderer in the real iTerm2/font/theme combination.
+2. Refine movement/relocation continuity and add compact/peek states.
+3. Move the fox into a stable declarative avatar-package schema.
+4. Make Markdown/LaTeX/editor structure first-class, not coding-only.
+5. Benchmark tiny constrained models only after the deterministic runtime is pleasant.
 
-See [`docs/ROADMAP.md`](docs/ROADMAP.md).
+See [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
 
 ## Design non-goals
 
