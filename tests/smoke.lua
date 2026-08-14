@@ -1,5 +1,6 @@
 local familiar = require("familiar")
-local avatar = require("familiar.avatar").load("fox")
+local avatar_mod = require("familiar.avatar")
+local avatar = avatar_mod.load("fox")
 local renderer = require("familiar.renderer")
 
 assert(avatar.width == 16)
@@ -26,6 +27,15 @@ for frame_name, _ in pairs(avatar.frames) do
   assert(span_count < avatar.width * (avatar.height / 2))
 end
 
+local bad_palette = vim.deepcopy(avatar)
+bad_palette.frames.idle_1[1] = "Z" .. bad_palette.frames.idle_1[1]:sub(2)
+assert(not pcall(avatar_mod.validate, bad_palette))
+
+local bad_animation = vim.deepcopy(avatar)
+bad_animation.animations.idle.frames[1] = "missing_frame"
+assert(not pcall(avatar_mod.validate, bad_animation))
+
 familiar.setup({ enabled = false, core = { enabled = false } })
 assert(familiar.status().running == false)
+assert(vim.fn.exists(":FamiliarDemo") == 2)
 print("familiar.nvim smoke: ok")
