@@ -234,7 +234,10 @@ fn plan(world: &World) -> BehaviorIntent {
     }
 }
 
-fn write_message(out: &mut BufWriter<io::StdoutLock<'_>>, message: &ServerMessage) -> io::Result<()> {
+fn write_message(
+    out: &mut BufWriter<io::StdoutLock<'_>>,
+    message: &ServerMessage,
+) -> io::Result<()> {
     serde_json::to_writer(&mut *out, message)?;
     out.write_all(b"\n")?;
     out.flush()
@@ -282,9 +285,7 @@ fn main() -> io::Result<()> {
                 if protocol != PROTOCOL_VERSION {
                     protocol_error(
                         &mut out,
-                        format!(
-                            "protocol mismatch: client={protocol}, core={PROTOCOL_VERSION}"
-                        ),
+                        format!("protocol mismatch: client={protocol}, core={PROTOCOL_VERSION}"),
                     );
                     continue;
                 }
