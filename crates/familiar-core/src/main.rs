@@ -3,7 +3,7 @@ mod protocol;
 mod world;
 
 use brain::{Brain, RuleBrain};
-use protocol::{ClientMessage, CORE_VERSION, PROTOCOL_VERSION, ServerMessage};
+use protocol::{CORE_VERSION, ClientMessage, PROTOCOL_VERSION, ServerMessage};
 use std::io::{self, BufRead, BufWriter, Write};
 use world::World;
 
