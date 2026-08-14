@@ -18,6 +18,7 @@ local state = {
   frame_index = 1,
   transition = nil,
   intent = nil,
+  demo = nil,
   seq = 0,
   last_snapshot = 0,
   last_relocate = 0,
@@ -41,6 +42,10 @@ local function normal_parent()
   local buf = vim.api.nvim_win_get_buf(win)
   if not vim.api.nvim_buf_is_valid(buf) or vim.bo[buf].buftype ~= "" then return nil end
   return win, buf
+end
+
+local function demo_active()
+  return state.demo ~= nil and now() < state.demo.until_ms
 end
 
 local function set_animation(name, restart)
@@ -92,7 +97,7 @@ end
 
 local function apply_intent(intent)
   state.intent = intent
-  if state.transition or not state.position then return end
+  if demo_active() or state.transition or not state.position then return end
   if intent.behavior == "sleep" then
     set_animation("sleep")
   elseif intent.behavior == "focus" then
@@ -213,7 +218,7 @@ local function approach(current, target, step)
 end
 
 local function advance_motion()
-  if state.transition or not state.position or not state.target then return end
+  if demo_active() or state.transition or not state.position or not state.target then return end
   if distance(state.position, state.target) == 0 then
     apply_intent(state.intent or { behavior = "idle" })
     return
@@ -253,6 +258,13 @@ local function finish_transition(animation)
   end
 end
 
+local function expire_demo_if_needed()
+  if state.demo and not demo_active() then
+    state.demo = nil
+    apply_intent(state.intent or { behavior = "idle" })
+  end
+end
+
 local function tick()
   if not state.running then return end
   local parent, buf = normal_parent()
@@ -265,6 +277,7 @@ local function tick()
     recompute_target(true)
   end
 
+  expire_demo_if_needed()
   advance_motion()
   local frame, completed, animation = animation_frame()
   if state.position then
@@ -273,7 +286,7 @@ local function tick()
     renderer.hide()
   end
 
-  if completed then
+  if completed and not demo_active() then
     finish_transition(animation)
   end
 
@@ -319,6 +332,7 @@ function M.start(config)
   state.position = nil
   state.target = nil
   state.transition = nil
+  state.demo = nil
   state.last_snapshot = 0
   state.last_relocate = 0
 
@@ -350,6 +364,7 @@ function M.stop()
   state.position = nil
   state.target = nil
   state.transition = nil
+  state.demo = nil
 end
 
 function M.toggle(config)
@@ -358,6 +373,40 @@ function M.toggle(config)
   else
     M.start(config)
   end
+end
+
+function M.demo(animation, duration_ms)
+  if not state.running then
+    return false, "familiar is not running"
+  end
+  if not state.avatar.animations[animation] then
+    return false, ("unknown animation: %s"):format(tostring(animation))
+  end
+  if state.transition then
+    return false, "wait for the current movement transition to finish"
+  end
+  if not state.position then
+    return false, "no safe render position is available in the current window"
+  end
+
+  local duration = tonumber(duration_ms) or 4000
+  duration = math.max(250, math.min(duration, 30000))
+  state.demo = {
+    animation = animation,
+    until_ms = now() + duration,
+  }
+  set_animation(animation, true)
+  return true
+end
+
+function M.animation_names(config)
+  local avatar = state.avatar
+  if not avatar then
+    avatar = avatar_loader.load(config.avatar)
+  end
+  local names = vim.tbl_keys(avatar.animations)
+  table.sort(names)
+  return names
 end
 
 function M.status()
@@ -369,6 +418,7 @@ function M.status()
     position = state.position,
     target = state.target,
     intent = state.intent,
+    demo = state.demo and state.demo.animation or nil,
   }
 end
 
