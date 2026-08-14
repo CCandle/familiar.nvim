@@ -78,11 +78,14 @@ local function local_intent(snapshot)
   if snapshot.activity.idle_ms >= 120000 then
     return { behavior = "sleep", mood = "sleepy" }
   end
-  if snapshot.activity.typing or snapshot.mode:sub(1, 1) == "i" then
-    return { behavior = "focus", mood = "focused" }
-  end
   if snapshot.diagnostics.errors > 0 then
     return { behavior = "inspect", mood = "concerned", emote = "question" }
+  end
+  if snapshot.activity.buffer_switches_10s >= 3 then
+    return { behavior = "curious", mood = "curious", emote = "question" }
+  end
+  if snapshot.activity.typing or snapshot.mode:sub(1, 1) == "i" then
+    return { behavior = "focus", mood = "focused" }
   end
   return { behavior = "idle", mood = "calm" }
 end
@@ -98,9 +101,9 @@ local function apply_intent(intent)
     state.transition = { kind = "hide" }
     set_animation("vanish", true)
   elseif intent.behavior == "curious" then
-    set_animation("idle")
+    set_animation("curious")
   elseif intent.behavior == "inspect" then
-    set_animation("idle")
+    set_animation("inspect")
   else
     set_animation("idle")
   end
