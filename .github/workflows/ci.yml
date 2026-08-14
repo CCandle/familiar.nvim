@@ -19,6 +19,17 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo test --workspace
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo build --release -p familiar-core
+      - name: Core protocol smoke test
+        run: |
+          output="$(printf '%s\n' \
+            '{"type":"hello","protocol":1,"client":"ci"}' \
+            '{"type":"ping","id":7}' \
+            '{"type":"shutdown"}' \
+            | target/release/familiar-core)"
+          printf '%s\n' "$output"
+          grep -q '"type":"ready"' <<<"$output"
+          grep -q '"type":"pong"' <<<"$output"
 
   neovim:
     runs-on: ubuntu-latest
