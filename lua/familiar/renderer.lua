@@ -28,7 +28,10 @@ local function ensure_buffer()
 end
 
 local function define_base_highlight()
-  vim.api.nvim_set_hl(0, "FamiliarTransparent", { bg = "NONE", fg = "NONE" })
+  -- The render surface is a floating window. Make its untouched cells fully
+  -- transparent; pixel foregrounds remain visible, and mixed top/bottom cells
+  -- explicitly override blending in color_group().
+  vim.api.nvim_set_hl(0, "FamiliarTransparent", { blend = 100 })
 end
 
 local function color_group(top, bottom, palette)
@@ -45,11 +48,14 @@ local function color_group(top, bottom, palette)
   elseif bottom then
     spec.fg = palette[bottom]
   end
+
+  -- A different lower pixel needs an actual cell background. Keep that pair
+  -- opaque even though the surrounding render surface uses winblend=100.
   if top and bottom and top ~= bottom then
     spec.bg = palette[bottom]
-  else
-    spec.bg = "NONE"
+    spec.blend = 0
   end
+
   vim.api.nvim_set_hl(0, group, spec)
   state.highlights[key] = group
   return group
@@ -57,7 +63,7 @@ end
 
 local function cell(top, bottom, palette)
   if not top and not bottom then
-    return " ", "FamiliarTransparent"
+    return " ", nil
   end
   if top and bottom and top == bottom then
     return "█", color_group(top, nil, palette)
@@ -92,8 +98,21 @@ local function frame_lines(avatar, frame)
       local glyph, hl = cell(top, bottom, avatar.palette)
       parts[#parts + 1] = glyph
       local bytes = #glyph
-      row_spans[#row_spans + 1] = { byte_col, byte_col + bytes, hl }
-      byte_col = byte_col + bytes
+      local next_col = byte_col + bytes
+
+      -- Transparent spaces inherit FamiliarTransparent, so they need no
+      -- extmark. Merge adjacent equal-color cells to keep per-frame extmark
+      -- churn small even when the sprite grows beyond the current 16x16 fox.
+      if hl then
+        local previous = row_spans[#row_spans]
+        if previous and previous[3] == hl and previous[2] == byte_col then
+          previous[2] = next_col
+        else
+          row_spans[#row_spans + 1] = { byte_col, next_col, hl }
+        end
+      end
+
+      byte_col = next_col
     end
 
     lines[#lines + 1] = table.concat(parts)
@@ -140,7 +159,7 @@ local function ensure_window(parent, width, height, row, col)
   state.height = height
 
   vim.wo[state.win].wrap = false
-  vim.wo[state.win].winblend = 0
+  vim.wo[state.win].winblend = 100
   vim.wo[state.win].winhighlight = "Normal:FamiliarTransparent,NormalFloat:FamiliarTransparent,EndOfBuffer:FamiliarTransparent"
   return state.win
 end
