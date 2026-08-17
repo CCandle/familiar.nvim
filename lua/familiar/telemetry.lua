@@ -98,9 +98,10 @@ function M.snapshot(config)
   if vim.bo[buf].buftype ~= "" then return nil end
 
   local cursor = vim.api.nvim_win_get_cursor(win)
-  local top, bottom = vim.api.nvim_win_call(win, function()
-    return vim.fn.line("w0"), vim.fn.line("w$")
+  local bounds = vim.api.nvim_win_call(win, function()
+    return { vim.fn.line("w0"), vim.fn.line("w$") }
   end)
+  local top, bottom = bounds[1], bounds[2]
   local max_lines = config.telemetry.max_visible_lines or 120
   local last = math.min(bottom, top + max_lines - 1)
   local lines = vim.api.nvim_buf_get_lines(buf, top - 1, last, false)

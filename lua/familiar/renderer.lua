@@ -182,9 +182,10 @@ local function right_edges(win)
     edges[row] = -1
   end
 
-  local top, bottom = vim.api.nvim_win_call(win, function()
-    return vim.fn.line("w0"), vim.fn.line("w$")
+  local bounds = vim.api.nvim_win_call(win, function()
+    return { vim.fn.line("w0"), vim.fn.line("w$") }
   end)
+  local top, bottom = bounds[1], bounds[2]
 
   for lnum = top, bottom do
     local line = (vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(win), lnum - 1, lnum, false)[1] or "")
