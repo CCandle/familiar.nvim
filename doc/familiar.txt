@@ -1,4 +1,4 @@
-*familiar.nvim*             Pixel-art familiar for Neovim
+*familiar.nvim*             Terminal-native familiar for Neovim
 
 ===============================================================================
 CONTENTS                                                     *familiar-contents*
@@ -7,20 +7,28 @@ CONTENTS                                                     *familiar-contents*
 2. Requirements ........................................ |familiar-requirements|
 3. Setup ................................................ |familiar-setup|
 4. Commands ............................................. |familiar-commands|
-5. Architecture ......................................... |familiar-architecture|
-6. Current limitations .................................. |familiar-limitations|
+5. Rendering ............................................ |familiar-rendering|
+6. Architecture ......................................... |familiar-architecture|
+7. Current limitations .................................. |familiar-limitations|
 
 ===============================================================================
 1. Introduction                                           *familiar-introduction*
 
-familiar.nvim is an experimental terminal-native pixel-art companion. It lives
-inside the editor without modifying file buffers, opening a chat UI, or
-producing free-form dialogue.
+familiar.nvim is an experimental terminal-native companion. It lives inside
+the editor without modifying file buffers, opening a chat UI, or producing
+free-form dialogue.
 
-The default avatar is a small fox. Current behavior reacts deterministically to
-basic editor state such as typing, diagnostics, idle time, viewport space, and
-rapid buffer switching. A constrained local AI policy is planned, but is not a
-current runtime dependency.
+The default avatar is "mote", an abstract glyph familiar limited to at most
+three terminal rows. It expresses state through a compact face grammar,
+optional ears/headwear, gestures, posture, and small Unicode effects instead
+of relying on a detailed animal sprite.
+
+The original 16x16 logical-pixel fox is still bundled as the alternate "fox"
+avatar.
+
+Current behavior reacts deterministically to typing, diagnostics, idle time,
+viewport space, and rapid buffer switching. A constrained local AI policy is
+planned, but is not a current runtime dependency.
 
 ===============================================================================
 2. Requirements                                             *familiar-requirements*
@@ -50,22 +58,33 @@ Equivalent explicit setup: >lua
   require("familiar").setup({
     enabled = true,
     debug = false,
+    avatar = "mote",
+
     core = {
       enabled = true,
       bin = nil,
     },
+
     render = {
       frame_ms = 125,
       margin = 1,
-      min_width = 48,
-      min_height = 12,
+      min_width = 36,
+      min_height = 8,
       move_step = 2,
       warp_distance = 32,
     },
+
     telemetry = {
       snapshot_ms = 1200,
       max_visible_lines = 120,
     },
+  })
+<
+
+Use the retained pixel fox instead: >lua
+
+  require("familiar").setup({
+    avatar = "fox",
   })
 <
 
@@ -88,16 +107,20 @@ development.
     Inspect the current avatar, animation, position, intent, and sidecar state.
 
 :FamiliarDemo {animation} [duration_ms]                        *:FamiliarDemo*
-    Temporarily force an existing avatar animation for visual inspection. This
-    is primarily a development/QA command. Completion lists the current fox
-    animations. The duration defaults to 4000 ms and is bounded internally.
+    Temporarily force an existing avatar animation for visual inspection.
+    Completion lists animations for the configured avatar. The duration
+    defaults to 4000 ms and is bounded internally.
 
-    Examples: >vim
+    Default Mote examples: >vim
 
       :FamiliarDemo idle 5000
       :FamiliarDemo inspect 5000
       :FamiliarDemo walk 3000
       :FamiliarDemo sleep 5000
+      :FamiliarDemo wave 4000
+      :FamiliarDemo cheer 4000
+      :FamiliarDemo magic 4000
+      :FamiliarDemo peek 4000
 <
 
 :checkhealth familiar                                      *familiar-health*
@@ -105,7 +128,45 @@ development.
     discovery, and current runtime state.
 
 ===============================================================================
-5. Architecture                                               *familiar-architecture*
+5. Rendering                                                   *familiar-rendering*
+
+The renderer supports two avatar kinds.
+
+GLYPH AVATARS ~
+
+The default Mote avatar stores a frame as one to three rows of styled text
+segments. A segment has literal text and an optional semantic color role.
+
+The visual design is intentionally highly abstract. For example: >
+
+     /\_/\
+    ( •ω• )
+<
+
+One-line states are used for compact motion, while three rows are reserved for
+poses that benefit from extra height. Frames are padded into a stable
+transparent render surface so their baseline does not jump as the content
+changes height.
+
+Special Unicode is decorative rather than structural. The default character
+should remain legible even when a terminal/font combination renders some
+non-core glyphs differently.
+
+PIXEL AVATARS ~
+
+The alternate fox avatar stores indexed logical pixels. Two vertical logical
+pixels are packed into one terminal cell with Unicode half/full block glyphs
+and true-color highlight groups.
+
+Both render kinds use a borderless, non-focusable floating window as an
+internal render surface. Untouched cells are transparent.
+
+Safe placement currently favors blank space at the right side of the active
+normal window. Wrapped rows are treated conservatively as occupied. If no safe
+region exists, the familiar hides rather than covering the document.
+
+===============================================================================
+6. Architecture                                               *familiar-architecture*
 
 The Neovim frontend is intentionally Lua-native: autocmds, buffers/windows,
 telemetry, floating render surface, highlights, and child-process lifecycle are
@@ -115,24 +176,26 @@ The optional `familiar-core` Rust child process owns normalized world state and
 behavior policy. It communicates with Lua via versioned JSON Lines over stdio.
 It is not a permanent system service and should exit with Neovim.
 
-Pixel art is represented as indexed logical pixels. Two vertical logical pixels
-are packed into one terminal cell with Unicode half/full block glyphs and
-true-color highlight groups. Runtime PNG/JPG assets are not required.
+Rendering is presentation. The brain selects semantic intents such as `idle`,
+`inspect`, `sleep`, or `focus`; the configured avatar decides how those intents
+look. The default glyph actor and retained pixel fox therefore share the same
+runtime behavior vocabulary.
 
 See the repository `docs/` directory for ADRs, protocol details, avatar-format
 direction, world-model design, and the future tiny-brain contract.
 
 ===============================================================================
-6. Current limitations                                         *familiar-limitations*
+7. Current limitations                                         *familiar-limitations*
 
-- The fox art and animation set are provisional.
+- The Mote art and gesture grammar are still being tuned in real terminals.
 - Safe placement currently favors blank space at the right side of the active
   normal window and does not yet model every virtual-text/UI obstacle.
-- Compact/peek bodies and richer edge-entry/exit transitions are planned.
+- `peek` exists as an avatar animation but is not yet driven by a dedicated
+  edge-interaction spatial behavior.
 - Markdown/LaTeX structural telemetry is designed but not yet implemented.
 - AI inference is intentionally not implemented yet.
-- Visual quality must still be validated in the real terminal/font/theme
-  combination; headless CI cannot prove appearance.
+- Headless CI can validate widths and schemas but cannot prove visual quality
+  across terminal/font/theme combinations.
 
 ===============================================================================
 vim:tw=78:ts=8:noet:ft=help:norl:

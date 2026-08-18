@@ -62,18 +62,46 @@ Failure of the sidecar is non-fatal. The Lua fallback remains functional.
 
 ## Rendering model
 
-Sprites are indexed logical-pixel matrices. Two logical vertical pixels are packed into one terminal cell:
+Rendering is avatar-dependent presentation. The engine does not assume a species or a single visual representation.
+
+The current frontend supports two renderer kinds.
+
+### Glyph actor
+
+The default renderer direction is a small **1–3 terminal-row glyph actor**.
+
+A glyph frame contains rows of styled text segments. Each segment has literal text plus an optional semantic color role. For example, a frame may use `outline`, `face`, `effect`, `success`, and `alert` roles without knowing the final Neovim highlight-group names.
+
+This representation deliberately spends terminal cells on high-information features:
+
+- face/eyes/mouth;
+- ears, hair, horns, or headwear when useful;
+- hand gestures;
+- posture;
+- tiny effects or motion residue.
+
+A frame may use fewer rows than the avatar maximum. The renderer pads short frames into a fixed transparent render surface so one-line motion and three-line rest poses keep a stable screen-space anchor.
+
+Glyph row width is validated using terminal display width, not UTF-8 byte length.
+
+### Indexed pixel avatar
+
+The earlier pixel renderer remains supported. Pixel sprites are indexed logical-pixel matrices. Two logical vertical pixels are packed into one terminal cell:
 
 - same color: `█`
 - top only: `▀`
 - bottom only: `▄`
 - different top/bottom colors: `▀` with foreground/background pair
 
-Fully transparent cells are not emitted. A sprite row is split into contiguous non-transparent runs so transparent gaps do not overwrite the buffer.
+The original fox uses this path. It remains useful as an alternate avatar and a regression target, but it is no longer the default product direction.
 
-The frontend uses a borderless, non-focusable, mouse-transparent floating window as an internal **render surface**. This is not a user-facing panel: it has no chrome, never accepts focus, and exists only to place a multi-row sprite in screen-cell coordinates. Pixel colors inside that scratch buffer are applied with extmark highlights. The edited buffer, undo history, and file contents are never modified.
+### Shared render surface
 
-A screen-space render surface is preferred over anchoring each sprite row to buffer lines because wrapped Markdown/LaTeX lines can occupy multiple screen rows; a buffer-line-anchored sprite would stretch or fragment under `wrap`.
+Both renderer kinds use a borderless, non-focusable, mouse-transparent floating window as an internal **render surface**. This is not a user-facing panel: it has no chrome, never accepts focus, and exists only to place the familiar in screen-cell coordinates. Visible glyphs/pixels receive extmark highlights. The edited buffer, undo history, and file contents are never modified.
+
+A screen-space render surface is preferred over anchoring avatar rows to buffer lines because wrapped Markdown/LaTeX lines can occupy multiple screen rows; a buffer-line-anchored familiar would stretch or fragment under `wrap`.
+
+Unicode beyond common terminal glyphs is considered decorative. Missing exotic glyph support must not destroy the avatar's identity.
 
 ## Spatial model
 
@@ -82,7 +110,6 @@ The companion lives in **screen space**, not document coordinates.
 A safe-placement pass uses:
 
 - window width/height;
-- text-column offset (number/sign/fold columns);
 - visible buffer lines;
 - display width of those lines;
 - avatar dimensions;
@@ -103,9 +130,9 @@ Preferred order:
 3. large or obstructed distance: vanish/appear or leave/enter edge;
 4. impossible space: hide.
 
-Buffer switches cannot safely be delayed merely to show a departure animation. The initial implementation therefore preserves continuity by animating **arrival** in the new buffer (for example, running in from the edge). Later versions may also use pre-leave cues when they can be shown without blocking editor actions.
+Buffer switches cannot safely be delayed merely to show a departure animation. The initial implementation therefore preserves continuity by animating **arrival** in the new buffer. Later versions may also use pre-leave cues when they can be shown without blocking editor actions.
 
-Display modes (`full`, `compact`, `peek`, `hidden`) also require transitions rather than hard cuts when time and space permit.
+Display modes (`full`, `compact`, `peek`, `hidden`) also require transitions rather than hard cuts when time and space permit. For glyph actors these modes may be represented by different row counts or partial faces rather than scaled versions of one sprite.
 
 ## World model
 
@@ -162,7 +189,7 @@ A future model receives a bounded structured snapshot and returns only a schema-
 }
 ```
 
-Every visible token (`question`, `sparkle`, etc.) maps to an asset declared by the avatar/runtime. The model cannot invent strings, Unicode, colors, commands, paths, or sprite data at runtime.
+Every visible token (`question`, `sparkle`, etc.) maps to an asset declared by the avatar/runtime. The model cannot invent strings, Unicode, colors, commands, paths, glyph frames, or sprite data at runtime.
 
 The deterministic `RuleBrain` always exists and is the fail-safe.
 

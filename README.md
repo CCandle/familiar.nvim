@@ -1,32 +1,63 @@
 # familiar.nvim
 
-A tiny pixel-art familiar that lives inside Neovim.
+A tiny terminal-native familiar that lives inside Neovim.
 
-`familiar.nvim` is an experimental Neovim companion: a terminal-native animated avatar that observes editor context, moves through available screen space, and reacts without chat, popups, or free-form generated text.
+`familiar.nvim` is an experimental editor companion: a small animated character that watches editor context, moves through available screen space, and reacts without chat, popups, or free-form generated text.
 
-The first avatar is a small fox. The long-term design makes avatars, animations, emotes, personality data, and behavior policy replaceable.
+The default familiar is now **Mote**, a deliberately abstract 1–3 line glyph actor. It is not bound to a species. Its identity comes from a compact face grammar, optional ears/headwear, hand gestures, posture, and a small effect vocabulary. The earlier 16×16 pixel fox remains available as an alternate avatar while the renderer architecture evolves.
 
-> **Status:** early development. The current repository is a working vertical slice for the pixel renderer, lifecycle, basic telemetry, deterministic behavior, and Rust sidecar protocol. AI inference is intentionally not implemented yet.
+> **Status:** early development. The repository is a working vertical slice for glyph/pixel rendering, lifecycle, basic telemetry, deterministic behavior, and the Rust sidecar protocol. AI inference is intentionally not implemented yet.
 
 ## What it is
 
-The intended experience is closer to a small game character living in the editor than to a status widget.
+The intended experience is closer to a tiny character living in the editor than to a status widget.
 
-The current vertical slice already provides:
+The current vertical slice provides:
 
-- terminal-native indexed pixel art rendered with half-block cells;
+- a default **1–3 terminal-row glyph familiar** rather than a fixed animal sprite;
+- expressive state changes through facial glyph substitution, gestures, posture, and tiny Unicode effects;
 - short-distance walk/run relocation instead of visible coordinate jumps;
 - disappear/appear transitions for large relocations and animated arrival after buffer changes;
 - deterministic reactions to typing, idle time, diagnostics, and rapid buffer switching;
-- a small fox with idle/blink, attention, walk/run, sleep, appear, and vanish frames;
 - conservative safe placement that hides the familiar when the current window is too dense;
 - a lifecycle-bound Rust sidecar with a Lua fallback;
-- avatar validation for palette, sprite, and animation-graph consistency;
-- an explicit animation demo command for real-terminal visual inspection.
-
-Planned behavior includes richer screen-edge entry/exit, compact/peek display modes, Markdown/LaTeX structural awareness, declarative avatar packs, and eventually a tiny constrained local model.
+- avatar validation for glyph roles, row bounds, pixel palettes, frames, and animation graphs;
+- an explicit animation demo command for real-terminal visual inspection;
+- the original half-block pixel renderer and fox avatar as a compatibility/experimentation path.
 
 The familiar never speaks. The eventual AI is a **constrained behavior director**, not a text generator or renderer.
+
+## Visual language
+
+The default avatar is intentionally tiny:
+
+```text
+   /\_/\
+  ( •ω• )
+```
+
+It can collapse to one line for motion or compact states:
+
+```text
+  (•ω•)ﾉ
+  ≡(•̀ω•́)
+```
+
+and expand to three lines only when posture benefits from it:
+
+```text
+   /\_/\
+  ( -ω- )___
+  ──────────
+```
+
+The design rule is:
+
+> recognizable in at most three terminal rows; expression comes from glyph substitution and pose, never from raster detail.
+
+Mote uses a restrained palette of outline, face, effect, success, and alert roles. Braille-like dots and symbols are reserved for motion residue or small effects rather than used to rasterize the body.
+
+The default design is cat-ish only when the ears help the silhouette. It is not canonically a cat, fox, or furry character. Avatar packs are expected to replace or omit ears, add hair/headwear, change facial grammar, and define different gestures while keeping the same semantic action vocabulary.
 
 ## Architecture
 
@@ -37,7 +68,7 @@ Neovim
   v
 Lua frontend
   |  - Neovim API integration
-  |  - pixel render surface
+  |  - glyph + pixel render paths
   |  - safe placement
   |  - animation presentation
   |
@@ -47,24 +78,40 @@ Rust familiar-core (child process)
      - protocol
      - world state
      - RuleBrain / future Brain implementations
-     - spatial / transition planning (growing here over time)
+     - spatial / transition planning
      - memory (planned)
      - tiny local model backend (planned)
 ```
 
 The Rust process is **not a daemon**. Neovim starts it on demand and terminates it on exit. If the sidecar is missing or fails, the Lua renderer remains usable with a deterministic fallback policy.
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and the ADRs under [`docs/adr/`](docs/adr/).
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/AVATAR_FORMAT_DRAFT.md`](docs/AVATAR_FORMAT_DRAFT.md), and the ADRs under [`docs/adr/`](docs/adr/).
 
 ## Rendering
 
-The default renderer uses indexed logical pixels and Unicode half blocks (`▀`, `▄`, `█`). One terminal cell represents two vertical logical pixels. Sprites are therefore stored as tiny text matrices rather than PNG/JPG runtime assets.
+Two render kinds currently exist.
 
-The current implementation draws into a borderless, non-focusable, mouse-transparent floating window used purely as an internal render surface. `winblend` and per-pixel highlight blending keep untouched cells transparent while mixed top/bottom pixel cells stay colored. This keeps the sprite coherent in screen coordinates even when Markdown/LaTeX lines wrap.
+### Glyph avatars
 
-The renderer currently searches for blank space on the right side of the active normal window. Wrapped rows are treated conservatively as occupied. If no safe region exists, the familiar disappears instead of covering the document.
+The default `mote` avatar stores each frame as 1–3 rows of styled text segments. A segment carries text plus a semantic color role such as `outline`, `face`, or `effect`.
 
-The fox is still provisional art, but the current sprite is a recognizable 16×16 logical-pixel familiar rather than a placeholder status face. The stable external avatar-package format is intentionally deferred until the first visual round reveals what the engine actually needs.
+Rows may have different visible content but are validated against a small maximum terminal footprint. The renderer pads frames into a stable transparent surface, so one-line run/appear states and three-line rest states share a consistent anchor without requiring a raster sprite.
+
+This path intentionally prefers common terminal glyphs. Special Unicode is decorative, not structural: a missing fancy wedge must never destroy the character.
+
+### Pixel avatars
+
+The older `fox` avatar uses indexed logical pixels packed with Unicode half blocks (`▀`, `▄`, `█`). It remains supported for comparison and future avatar experimentation:
+
+```lua
+require("familiar").setup({
+  avatar = "fox",
+})
+```
+
+The current renderer draws into a borderless, non-focusable floating window used purely as an internal render surface. The surface is transparent and uses highlight groups only for visible character/pixel cells.
+
+Safe placement currently searches blank space on the right side of the active normal window. Wrapped rows are treated conservatively as occupied. If no safe region exists, the familiar disappears instead of covering the document.
 
 ## Current requirements
 
@@ -74,13 +121,11 @@ The initial development target is intentionally narrow:
 - `lazy.nvim`
 - a true-color terminal; iTerm2 is the primary development terminal
 - macOS is the primary development OS
-- Rust is optional for the current renderer slice, but required to build `familiar-core`
+- Rust is optional for the Lua fallback, but required to build `familiar-core`
 
 Broader package-manager and platform support comes later if the plugin proves worth maintaining.
 
 ## Install with lazy.nvim
-
-For the current development version:
 
 ```lua
 {
@@ -93,7 +138,7 @@ For the current development version:
 
 If Rust is unavailable, omit `build`. The plugin uses the Lua fallback rather than requiring Ollama or another permanent service.
 
-For local development, point lazy.nvim directly at a checkout:
+For local development:
 
 ```lua
 {
@@ -115,14 +160,17 @@ For local development, point lazy.nvim directly at a checkout:
 - `:FamiliarDemo <animation> [duration_ms]`
 - `:checkhealth familiar`
 
-`FamiliarDemo` is intended for development/visual QA. For example:
+`FamiliarDemo` is intended for visual QA. The default Mote avatar includes both behavioral and showcase animations:
 
 ```vim
 :FamiliarDemo idle 5000
 :FamiliarDemo inspect 5000
 :FamiliarDemo walk 3000
 :FamiliarDemo sleep 5000
-:FamiliarDemo appear 1500
+:FamiliarDemo wave 4000
+:FamiliarDemo cheer 4000
+:FamiliarDemo magic 4000
+:FamiliarDemo peek 4000
 ```
 
 No default keymaps are installed.
@@ -133,17 +181,18 @@ No default keymaps are installed.
 require("familiar").setup({
   enabled = true,
   debug = false,
+  avatar = "mote", -- "mote" (default glyph actor) or "fox" (legacy pixel avatar)
 
   core = {
     enabled = true,
-    bin = nil, -- nil: auto-detect target/release/familiar-core
+    bin = nil,
   },
 
   render = {
     frame_ms = 125,
     margin = 1,
-    min_width = 48,
-    min_height = 12,
+    min_width = 36,
+    min_height = 8,
     move_step = 2,
     warp_distance = 32,
   },
@@ -159,13 +208,11 @@ The public configuration surface is intentionally small while the architecture i
 
 ## Development priorities
 
-1. Validate and tune the pixel renderer in the real iTerm2/font/theme combination.
-2. Refine movement/relocation continuity and add compact/peek states.
-3. Move the fox into a stable declarative avatar-package schema.
+1. Refine the 1–3 row glyph character grammar in real terminals and make the default Mote feel alive rather than decorative.
+2. Improve movement/relocation continuity and turn `peek`/edge interaction into real spatial behaviors rather than demo-only animations.
+3. Stabilize a declarative avatar-package schema that can represent glyph actors first and pixel sprites second.
 4. Make Markdown/LaTeX/editor structure first-class, not coding-only.
 5. Benchmark tiny constrained models only after the deterministic runtime is pleasant.
-
-See [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
 
 ## Design non-goals
 
@@ -175,18 +222,8 @@ See [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`docs/DEVELOPMENT.md`](docs/DEVELO
 - no Ollama dependency;
 - no image-protocol dependency for the core experience;
 - no model call per animation frame;
+- no requirement that an avatar represent a particular animal;
 - no hiding core behavior behind a model that can fail unpredictably.
-
-## References
-
-The plugin architecture follows current Neovim and lazy.nvim primitives rather than inventing its own host system:
-
-- Neovim API: <https://neovim.io/doc/user/api.html>
-- Neovim channels/jobs: <https://neovim.io/doc/user/channel.html>
-- lazy.nvim plugin spec: <https://lazy.folke.io/spec>
-- lazy.nvim developer guidance: <https://lazy.folke.io/developers>
-
-`blink.cmp` is also a useful precedent for shipping performance-sensitive Rust code inside a Neovim plugin while keeping the user-facing integration in Lua.
 
 ## License
 

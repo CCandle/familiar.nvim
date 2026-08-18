@@ -1,7 +1,7 @@
 local M = {}
 
 local state = {
-  ns = vim.api.nvim_create_namespace("familiar_pixels"),
+  ns = vim.api.nvim_create_namespace("familiar_render"),
   buf = nil,
   win = nil,
   parent = nil,
@@ -13,6 +13,17 @@ local state = {
 
 local function valid_win(win)
   return win and vim.api.nvim_win_is_valid(win)
+end
+
+local function avatar_kind(avatar)
+  return avatar.kind or "pixel"
+end
+
+local function render_height(avatar)
+  if avatar_kind(avatar) == "pixel" then
+    return avatar.height / 2
+  end
+  return avatar.height
 end
 
 local function ensure_buffer()
@@ -29,14 +40,11 @@ local function ensure_buffer()
 end
 
 local function define_base_highlight()
-  -- The render surface is a floating window. Make its untouched cells fully
-  -- transparent; pixel foregrounds remain visible, and mixed top/bottom cells
-  -- explicitly override blending in color_group().
   vim.api.nvim_set_hl(0, "FamiliarTransparent", { blend = 100 })
 end
 
-local function color_group(top, bottom, palette)
-  local key = (top or "_") .. "_" .. (bottom or "_")
+local function pixel_color_group(top, bottom, palette)
+  local key = "pixel:" .. (top or "_") .. "_" .. (bottom or "_")
   if state.highlights[key] then
     return state.highlights[key]
   end
@@ -50,8 +58,6 @@ local function color_group(top, bottom, palette)
     spec.fg = palette[bottom]
   end
 
-  -- A different lower pixel needs an actual cell background. Keep that pair
-  -- opaque even though the surrounding render surface uses winblend=100.
   if top and bottom and top ~= bottom then
     spec.bg = palette[bottom]
     spec.blend = 0
@@ -62,23 +68,37 @@ local function color_group(top, bottom, palette)
   return group
 end
 
-local function cell(top, bottom, palette)
+local function glyph_color_group(avatar, role)
+  local color = avatar.palette[role]
+  local key = table.concat({ "glyph", avatar.id, role, color }, ":")
+  if state.highlights[key] then
+    return state.highlights[key]
+  end
+
+  local safe = (avatar.id .. "_" .. role):gsub("[^%w_]", "_")
+  local group = "FamiliarGlyph_" .. safe
+  vim.api.nvim_set_hl(0, group, { fg = color })
+  state.highlights[key] = group
+  return group
+end
+
+local function pixel_cell(top, bottom, palette)
   if not top and not bottom then
     return " ", nil
   end
   if top and bottom and top == bottom then
-    return "█", color_group(top, nil, palette)
+    return "█", pixel_color_group(top, nil, palette)
   end
   if top and bottom then
-    return "▀", color_group(top, bottom, palette)
+    return "▀", pixel_color_group(top, bottom, palette)
   end
   if top then
-    return "▀", color_group(top, nil, palette)
+    return "▀", pixel_color_group(top, nil, palette)
   end
-  return "▄", color_group(nil, bottom, palette)
+  return "▄", pixel_color_group(nil, bottom, palette)
 end
 
-local function frame_lines(avatar, frame)
+local function pixel_frame_lines(avatar, frame)
   local lines = {}
   local spans = {}
   local transparent = "."
@@ -96,14 +116,10 @@ local function frame_lines(avatar, frame)
       if top == transparent then top = nil end
       if bottom == transparent then bottom = nil end
 
-      local glyph, hl = cell(top, bottom, avatar.palette)
+      local glyph, hl = pixel_cell(top, bottom, avatar.palette)
       parts[#parts + 1] = glyph
-      local bytes = #glyph
-      local next_col = byte_col + bytes
+      local next_col = byte_col + #glyph
 
-      -- Transparent spaces inherit FamiliarTransparent, so they need no
-      -- extmark. Merge adjacent equal-color cells to keep per-frame extmark
-      -- churn small even when the sprite grows beyond the current 16x16 fox.
       if hl then
         local previous = row_spans[#row_spans]
         if previous and previous[3] == hl and previous[2] == byte_col then
@@ -121,6 +137,59 @@ local function frame_lines(avatar, frame)
   end
 
   return lines, spans
+end
+
+local function glyph_frame_lines(avatar, frame)
+  local lines = {}
+  local spans = {}
+  local top_padding = avatar.height - #frame.rows
+
+  for _ = 1, top_padding do
+    lines[#lines + 1] = string.rep(" ", avatar.width)
+    spans[#spans + 1] = {}
+  end
+
+  for _, row in ipairs(frame.rows) do
+    local parts = {}
+    local row_spans = {}
+    local byte_col = 0
+
+    for _, segment in ipairs(row) do
+      local text = segment.text
+      parts[#parts + 1] = text
+      local next_col = byte_col + #text
+
+      if segment.role then
+        local hl = glyph_color_group(avatar, segment.role)
+        local previous = row_spans[#row_spans]
+        if previous and previous[3] == hl and previous[2] == byte_col then
+          previous[2] = next_col
+        else
+          row_spans[#row_spans + 1] = { byte_col, next_col, hl }
+        end
+      end
+
+      byte_col = next_col
+    end
+
+    local line = table.concat(parts)
+    local padding = avatar.width - vim.fn.strdisplaywidth(line)
+    if padding > 0 then
+      line = line .. string.rep(" ", padding)
+    end
+
+    lines[#lines + 1] = line
+    spans[#spans + 1] = row_spans
+  end
+
+  return lines, spans
+end
+
+local function frame_lines(avatar, frame)
+  if avatar_kind(avatar) == "glyph" then
+    return glyph_frame_lines(avatar, frame)
+  end
+  return pixel_frame_lines(avatar, frame)
 end
 
 local function ensure_window(parent, width, height, row, col)
@@ -161,7 +230,8 @@ local function ensure_window(parent, width, height, row, col)
 
   vim.wo[state.win].wrap = false
   vim.wo[state.win].winblend = 100
-  vim.wo[state.win].winhighlight = "Normal:FamiliarTransparent,NormalFloat:FamiliarTransparent,EndOfBuffer:FamiliarTransparent"
+  vim.wo[state.win].winhighlight =
+    "Normal:FamiliarTransparent,NormalFloat:FamiliarTransparent,EndOfBuffer:FamiliarTransparent"
   return state.win
 end
 
@@ -225,7 +295,7 @@ function M.find_safe_position(win, avatar, opts)
   local width = vim.api.nvim_win_get_width(win)
   local height = vim.api.nvim_win_get_height(win)
   local sprite_w = avatar.width
-  local sprite_h = avatar.height / 2
+  local sprite_h = render_height(avatar)
   local margin = opts.margin or 1
 
   if width < (opts.min_width or 1) or height < (opts.min_height or 1) then
@@ -274,14 +344,15 @@ function M.draw(parent, avatar, frame_name, position)
   local frame = avatar.frames[frame_name]
   if not frame then return end
 
-  local draw_key = table.concat({ avatar.id, parent, frame_name, position.x, position.y }, ":")
+  local draw_key = table.concat({ avatar.id, avatar_kind(avatar), parent, frame_name, position.x, position.y }, ":")
   if state.last_draw == draw_key and valid_win(state.win) then
     return
   end
 
   define_base_highlight()
   local lines, spans = frame_lines(avatar, frame)
-  local win = ensure_window(parent, avatar.width, avatar.height / 2, position.y, position.x)
+  local height = render_height(avatar)
+  local win = ensure_window(parent, avatar.width, height, position.y, position.x)
   local buf = ensure_buffer()
 
   vim.bo[buf].modifiable = true
@@ -306,7 +377,7 @@ function M.draw(parent, avatar, frame_name, position)
       row = position.y,
       col = position.x,
       width = avatar.width,
-      height = avatar.height / 2,
+      height = height,
     })
     state.last_draw = draw_key
   end
@@ -333,6 +404,10 @@ end
 
 function M._frame_lines(avatar, frame_name)
   return frame_lines(avatar, assert(avatar.frames[frame_name]))
+end
+
+function M._render_height(avatar)
+  return render_height(avatar)
 end
 
 return M
