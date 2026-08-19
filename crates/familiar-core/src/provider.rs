@@ -30,10 +30,10 @@ pub fn build_prompt(request: PolicyRequest<'_>) -> String {
     }
 
     format!(
-        "Reply with exactly ONE word from this list: {}\n\
+        "Return exactly ONE behavior label from: {}\n\
 mode={} filetype={} modified={} errors={} warnings={} idle_ms={} buffer_switches_10s={} previous={}\n\
 Nearby editor text:\n{}\
-Pick the behavior that feels natural and useful. Do not explain.",
+Choose the most natural low-distraction behavior. Output only the label, with no explanation or punctuation.",
         request.allowed.join(" | "),
         snapshot.mode,
         snapshot.buffer.filetype,
@@ -82,11 +82,54 @@ impl ProviderEngine {
     }
 }
 
+fn chat_completions_endpoint(config: &BrainConfig) -> Result<String, String> {
+    if let Some(endpoint) = config.endpoint.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+        return Ok(endpoint.to_string());
+    }
+
+    if let Some(base_url) = config.base_url.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+        return Ok(format!("{}/chat/completions", base_url.trim_end_matches('/')));
+    }
+
+    if config.provider == "ollama" {
+        return Ok("http://127.0.0.1:11434/v1/chat/completions".into());
+    }
+
+    Err("brain.endpoint or brain.base_url is required for openai_compatible".into())
+}
+
+fn extract_content(value: &Value) -> Result<String, String> {
+    let content = value
+        .pointer("/choices/0/message/content")
+        .ok_or_else(|| "provider response missing choices[0].message.content".to_string())?;
+
+    if let Some(text) = content.as_str() {
+        return Ok(text.to_string());
+    }
+
+    if let Some(parts) = content.as_array() {
+        let mut text = String::new();
+        for part in parts {
+            if let Some(segment) = part.get("text").and_then(Value::as_str) {
+                text.push_str(segment);
+            } else if let Some(segment) = part.get("content").and_then(Value::as_str) {
+                text.push_str(segment);
+            }
+        }
+        if !text.is_empty() {
+            return Ok(text);
+        }
+    }
+
+    Err("provider content was neither text nor supported text segments".into())
+}
+
 pub struct OpenAiCompatibleProvider {
     agent: ureq::Agent,
     endpoint: String,
     model: String,
     api_key: Option<String>,
+    headers: Map<String, Value>,
     temperature: f32,
     max_tokens: u32,
     extra_body: Map<String, Value>,
@@ -94,16 +137,18 @@ pub struct OpenAiCompatibleProvider {
 
 impl OpenAiCompatibleProvider {
     pub fn new(config: &BrainConfig) -> Result<Self, String> {
-        let endpoint = match (config.provider.as_str(), config.endpoint.as_deref()) {
-            ("ollama", None) => "http://127.0.0.1:11434/v1/chat/completions".to_string(),
-            (_, Some(endpoint)) if !endpoint.trim().is_empty() => endpoint.to_string(),
-            _ => return Err("brain.endpoint is required for openai_compatible".into()),
-        };
+        let endpoint = chat_completions_endpoint(config)?;
         let model = config
             .model
             .clone()
             .filter(|model| !model.trim().is_empty())
             .ok_or_else(|| "brain.model is required for ollama/openai_compatible".to_string())?;
+
+        for (name, value) in &config.headers {
+            if name.trim().is_empty() || value.as_str().is_none() {
+                return Err("brain.headers must contain non-empty string keys and string values".into());
+            }
+        }
 
         let agent_config = ureq::Agent::config_builder()
             .timeout_global(Some(Duration::from_millis(config.timeout_ms.max(250))))
@@ -115,6 +160,7 @@ impl OpenAiCompatibleProvider {
             endpoint,
             model,
             api_key: config.api_key.clone().filter(|key| !key.is_empty()),
+            headers: config.headers.clone(),
             temperature: config.temperature,
             max_tokens: config.max_tokens,
             extra_body: config.extra_body.clone(),
@@ -144,6 +190,11 @@ impl OpenAiCompatibleProvider {
         }
 
         let mut request = self.agent.post(&self.endpoint);
+        for (name, value) in &self.headers {
+            if let Some(value) = value.as_str() {
+                request = request.header(name, value);
+            }
+        }
         if let Some(key) = &self.api_key {
             request = request.header("Authorization", format!("Bearer {key}"));
         }
@@ -156,11 +207,7 @@ impl OpenAiCompatibleProvider {
             .read_json()
             .map_err(|error| format!("provider response was not JSON: {error}"))?;
 
-        value
-            .pointer("/choices/0/message/content")
-            .and_then(Value::as_str)
-            .map(str::to_string)
-            .ok_or_else(|| "provider response missing choices[0].message.content".into())
+        extract_content(&value)
     }
 }
 
@@ -188,8 +235,7 @@ impl LocalLlamaProvider {
             .ok_or_else(|| "brain.local.model_path is required for local_llama".to_string())?;
         let backend =
             LlamaBackend::init().map_err(|error| format!("llama backend init failed: {error}"))?;
-        let mut params =
-            LlamaModelParams::default().with_n_gpu_layers(config.local_config.n_gpu_layers);
+        let params = LlamaModelParams::default().with_n_gpu_layers(config.local_config.n_gpu_layers);
         let params = pin!(params);
         let model = LlamaModel::load_from_file(&backend, model_path, &params)
             .map_err(|error| format!("failed to load local model {model_path}: {error}"))?;
@@ -216,7 +262,7 @@ impl LocalLlamaProvider {
         ];
         let rendered = self
             .model
-            .apply_chat_template(None, messages, true)
+            .apply_chat_template(None, &messages, true)
             .map_err(|error| format!("chat template failed: {error}"))?;
         let tokens = self
             .model
@@ -336,5 +382,28 @@ mod tests {
         assert!(prompt.contains("focus | inspect"));
         assert!(prompt.contains("let answer = 42"));
         assert!(prompt.len() < 2_000);
+    }
+
+    #[test]
+    fn base_url_appends_chat_completions() {
+        let mut config = BrainConfig::default();
+        config.provider = "openai_compatible".into();
+        config.base_url = Some("https://example.test/v1/".into());
+        assert_eq!(
+            chat_completions_endpoint(&config).unwrap(),
+            "https://example.test/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn segmented_content_is_supported() {
+        let value = json!({
+            "choices": [{
+                "message": {
+                    "content": [{"type":"text", "text":"curious"}]
+                }
+            }]
+        });
+        assert_eq!(extract_content(&value).unwrap(), "curious");
     }
 }
