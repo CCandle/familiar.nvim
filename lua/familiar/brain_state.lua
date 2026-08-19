@@ -22,6 +22,18 @@ function M.reset()
   state = fresh_state()
 end
 
+function M.reconfiguring(provider, enabled)
+  state.enabled = enabled == true
+  state.provider = provider or state.provider
+  state.state = "reconfiguring"
+  state.error = nil
+  state.last_latency_ms = nil
+  state.last_choice = nil
+  state.consecutive_failures = 0
+  state.total_requests = 0
+  state.total_successes = 0
+end
+
 function M.handle(message)
   if message.type == "ready" then
     state.connected = true
