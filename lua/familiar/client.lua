@@ -60,6 +60,7 @@ local function brain_payload(config)
     model = source.model,
     endpoint = source.endpoint,
     api_key = api_key,
+    extra_body = vim.deepcopy(source.extra_body or {}),
     interval_ms = source.interval_ms,
     event_min_interval_ms = source.event_min_interval_ms,
     choice_ttl_ms = source.choice_ttl_ms,
