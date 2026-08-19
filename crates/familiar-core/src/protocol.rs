@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 pub const PROTOCOL_VERSION: u32 = 2;
 pub const CORE_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -34,7 +35,7 @@ fn default_n_gpu_layers() -> u32 {
     99
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct BrainConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -46,6 +47,8 @@ pub struct BrainConfig {
     pub endpoint: Option<String>,
     #[serde(default)]
     pub api_key: Option<String>,
+    #[serde(default)]
+    pub extra_body: Map<String, Value>,
     #[serde(default = "default_interval_ms")]
     pub interval_ms: u64,
     #[serde(default = "default_event_min_interval_ms")]
@@ -70,6 +73,7 @@ impl Default for BrainConfig {
             model: None,
             endpoint: None,
             api_key: None,
+            extra_body: Map::new(),
             interval_ms: default_interval_ms(),
             event_min_interval_ms: default_event_min_interval_ms(),
             choice_ttl_ms: default_choice_ttl_ms(),
@@ -81,7 +85,7 @@ impl Default for BrainConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct LocalBrainConfig {
     #[serde(default)]
     pub model_path: Option<String>,
@@ -104,7 +108,7 @@ impl Default for LocalBrainConfig {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMessage {
     Hello { protocol: u32, client: String },
