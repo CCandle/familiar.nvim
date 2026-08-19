@@ -119,28 +119,12 @@ impl Default for LocalBrainConfig {
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMessage {
-    Hello {
-        protocol: u32,
-        client: String,
-    },
-    Configure {
-        brain: BrainConfig,
-    },
-    Snapshot {
-        seq: u64,
-        snapshot: EditorSnapshot,
-    },
-    Event {
-        seq: u64,
-        event: EditorEvent,
-    },
-    BrainProbe {
-        id: u64,
-        snapshot: EditorSnapshot,
-    },
-    Ping {
-        id: u64,
-    },
+    Hello { protocol: u32, client: String },
+    Configure { brain: BrainConfig },
+    Snapshot { seq: u64, snapshot: EditorSnapshot },
+    Event { seq: u64, event: EditorEvent },
+    BrainProbe { id: u64, snapshot: EditorSnapshot },
+    Ping { id: u64 },
     Shutdown,
 }
 
