@@ -55,12 +55,10 @@ fn label_grammar(allowed: &[&str]) -> Result<String, String> {
 
     let mut alternatives = Vec::with_capacity(allowed.len());
     for label in allowed {
-        if label.is_empty()
-            || !label
-                .chars()
-                .all(|ch| ch.is_ascii_lowercase() || ch == '_')
-        {
-            return Err(format!("unsafe behavior label for local grammar: {label:?}"));
+        if label.is_empty() || !label.chars().all(|ch| ch.is_ascii_lowercase() || ch == '_') {
+            return Err(format!(
+                "unsafe behavior label for local grammar: {label:?}"
+            ));
         }
         alternatives.push(format!("\"{label}\""));
     }
@@ -103,12 +101,25 @@ impl ProviderEngine {
 }
 
 fn chat_completions_endpoint(config: &BrainConfig) -> Result<String, String> {
-    if let Some(endpoint) = config.endpoint.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+    if let Some(endpoint) = config
+        .endpoint
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
         return Ok(endpoint.to_string());
     }
 
-    if let Some(base_url) = config.base_url.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
-        return Ok(format!("{}/chat/completions", base_url.trim_end_matches('/')));
+    if let Some(base_url) = config
+        .base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        return Ok(format!(
+            "{}/chat/completions",
+            base_url.trim_end_matches('/')
+        ));
     }
 
     if config.provider == "ollama" {
@@ -166,7 +177,9 @@ impl OpenAiCompatibleProvider {
 
         for (name, value) in &config.headers {
             if name.trim().is_empty() || value.as_str().is_none() {
-                return Err("brain.headers must contain non-empty string keys and string values".into());
+                return Err(
+                    "brain.headers must contain non-empty string keys and string values".into(),
+                );
             }
         }
 
@@ -255,7 +268,8 @@ impl LocalLlamaProvider {
             .ok_or_else(|| "brain.local.model_path is required for local_llama".to_string())?;
         let backend =
             LlamaBackend::init().map_err(|error| format!("llama backend init failed: {error}"))?;
-        let params = LlamaModelParams::default().with_n_gpu_layers(config.local_config.n_gpu_layers);
+        let params =
+            LlamaModelParams::default().with_n_gpu_layers(config.local_config.n_gpu_layers);
         let params = pin!(params);
         let model = LlamaModel::load_from_file(&backend, model_path, &params)
             .map_err(|error| format!("failed to load local model {model_path}: {error}"))?;
