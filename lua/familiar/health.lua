@@ -34,7 +34,8 @@ function M.check()
     config.animation.trail.mode
   ))
 
-  local core = require("familiar.client").binary(config)
+  local client = require("familiar.client")
+  local core = client.binary(config)
   if core then
     vim.health.ok("familiar-core found: " .. core)
   elseif vim.fn.executable("cargo") == 1 then
@@ -43,6 +44,36 @@ function M.check()
     })
   else
     vim.health.info("familiar-core is unavailable and Cargo is not installed; Lua fallback remains usable")
+  end
+
+  local brain = require("familiar.brain_state").get()
+  local model = require("familiar.models").status()
+  vim.health.info(("brain configured: enabled=%s provider=%s interval=%dms buffer_text=%s"):format(
+    tostring(config.brain.enabled),
+    config.brain.provider,
+    config.brain.interval_ms,
+    tostring(config.brain.context.include_buffer_text)
+  ))
+
+  if model.installed then
+    vim.health.ok(("managed local model installed: %s (%.1f MB)"):format(model.id, model.bytes / 1000000))
+  else
+    vim.health.info(("managed local model not installed: %s (~%.0f MB, %s)"):format(
+      model.id,
+      model.approx_bytes / 1000000,
+      model.license
+    ))
+  end
+
+  if brain.connected then
+    vim.health.info(("brain runtime: provider=%s state=%s local_llama=%s"):format(
+      tostring(brain.provider),
+      tostring(brain.state),
+      tostring(brain.local_llama)
+    ))
+    if brain.error then vim.health.warn("brain provider error: " .. tostring(brain.error)) end
+  elseif config.brain.enabled and config.brain.provider == "local_llama" then
+    vim.health.info("local_llama requires a core built with: cargo build --release -p familiar-core --features local-llama")
   end
 
   local status = require("familiar").status()
