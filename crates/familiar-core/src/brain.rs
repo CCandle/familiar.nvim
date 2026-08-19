@@ -1,10 +1,12 @@
-use crate::protocol::{Behavior, BehaviorIntent, BrainConfig, Locomotion, Mood, Target};
+use crate::protocol::{
+    Behavior, BehaviorIntent, BrainConfig, EditorSnapshot, Locomotion, Mood, Target,
+};
 use crate::provider::{PolicyRequest, ProviderEngine, build_prompt};
 use crate::world::World;
 use serde_json::Value;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -73,6 +75,16 @@ impl AiBehavior {
             Self::Hide => "hide",
         }
     }
+}
+
+fn probe_behaviors() -> Vec<AiBehavior> {
+    vec![
+        AiBehavior::Idle,
+        AiBehavior::Focus,
+        AiBehavior::Inspect,
+        AiBehavior::Curious,
+        AiBehavior::Sleep,
+    ]
 }
 
 fn intent_for(choice: AiBehavior) -> BehaviorIntent {
@@ -245,12 +257,21 @@ struct AiJob {
     prompt: String,
     allowed: Vec<AiBehavior>,
     semantic_key: u64,
+    probe_id: Option<u64>,
 }
 
 struct AiReply {
     result: Result<AiBehavior, String>,
     latency_ms: u64,
     semantic_key: u64,
+    probe_id: Option<u64>,
+}
+
+pub struct BrainProbeOutcome {
+    pub ok: bool,
+    pub choice: Option<&'static str>,
+    pub latency_ms: Option<u64>,
+    pub error: Option<String>,
 }
 
 struct AiDirector {
@@ -294,6 +315,7 @@ impl AiDirector {
                             result,
                             latency_ms,
                             semantic_key: job.semantic_key,
+                            probe_id: job.probe_id,
                         })
                         .is_err()
                     {
@@ -326,38 +348,52 @@ impl AiDirector {
         Duration::from_millis((2_000_u64.saturating_mul(1_u64 << exponent)).min(60_000))
     }
 
+    fn record_failure(&mut self, error: String) {
+        self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+        self.backoff_until = Some(Instant::now() + self.failure_backoff());
+        eprintln!("familiar-core: AI provider: {error}");
+        self.last_error = Some(error);
+    }
+
+    fn record_success(&mut self, choice: AiBehavior, latency_ms: u64) {
+        self.last_latency_ms = Some(latency_ms);
+        self.last_choice = Some(choice.name());
+        self.last_error = None;
+        self.backoff_until = None;
+        self.consecutive_failures = 0;
+        self.total_successes = self.total_successes.saturating_add(1);
+    }
+
     fn poll(&mut self) {
         loop {
             match self.receiver.try_recv() {
                 Ok(reply) => {
                     self.in_flight = false;
                     self.last_latency_ms = Some(reply.latency_ms);
+                    if reply.probe_id.is_some() {
+                        match reply.result {
+                            Ok(choice) => self.record_success(choice, reply.latency_ms),
+                            Err(error) => self.record_failure(error),
+                        }
+                        continue;
+                    }
+
                     match reply.result {
                         Ok(choice) => {
+                            self.record_success(choice, reply.latency_ms);
                             self.cached = Some((
                                 choice,
                                 Instant::now() + Duration::from_millis(self.config.choice_ttl_ms),
                                 reply.semantic_key,
                             ));
-                            self.last_choice = Some(choice.name());
-                            self.last_error = None;
-                            self.backoff_until = None;
-                            self.consecutive_failures = 0;
-                            self.total_successes = self.total_successes.saturating_add(1);
                         }
-                        Err(error) => {
-                            self.consecutive_failures = self.consecutive_failures.saturating_add(1);
-                            self.backoff_until = Some(Instant::now() + self.failure_backoff());
-                            eprintln!("familiar-core: AI provider: {error}");
-                            self.last_error = Some(error);
-                        }
+                        Err(error) => self.record_failure(error),
                     }
                 }
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => {
                     self.in_flight = false;
-                    self.last_error = Some("brain worker disconnected".into());
-                    self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+                    self.record_failure("brain worker disconnected".into());
                     break;
                 }
             }
@@ -423,6 +459,7 @@ impl AiDirector {
                 prompt,
                 allowed,
                 semantic_key,
+                probe_id: None,
             })
             .is_ok()
         {
@@ -432,6 +469,107 @@ impl AiDirector {
             self.total_requests = self.total_requests.saturating_add(1);
         } else {
             self.last_error = Some("brain worker queue is unavailable".into());
+        }
+    }
+
+    fn probe(&mut self, id: u64, snapshot: &EditorSnapshot, previous: &str) -> BrainProbeOutcome {
+        self.poll();
+        if self.in_flight {
+            return BrainProbeOutcome {
+                ok: false,
+                choice: None,
+                latency_ms: None,
+                error: Some("provider is busy with a normal decision; retry shortly".into()),
+            };
+        }
+
+        let allowed = probe_behaviors();
+        let names: Vec<&'static str> = allowed.iter().map(|choice| choice.name()).collect();
+        let prompt = build_prompt(PolicyRequest {
+            snapshot,
+            allowed: &names,
+            previous,
+        });
+
+        if self
+            .sender
+            .send(AiJob {
+                prompt,
+                allowed,
+                semantic_key: 0,
+                probe_id: Some(id),
+            })
+            .is_err()
+        {
+            return BrainProbeOutcome {
+                ok: false,
+                choice: None,
+                latency_ms: None,
+                error: Some("brain worker queue is unavailable".into()),
+            };
+        }
+
+        self.in_flight = true;
+        self.total_requests = self.total_requests.saturating_add(1);
+        let wait = Duration::from_millis(self.config.timeout_ms.saturating_add(1_500));
+        match self.receiver.recv_timeout(wait) {
+            Ok(reply) => {
+                self.in_flight = false;
+                self.last_latency_ms = Some(reply.latency_ms);
+                if reply.probe_id != Some(id) {
+                    let error = "brain worker returned an unexpected probe response".to_string();
+                    self.record_failure(error.clone());
+                    return BrainProbeOutcome {
+                        ok: false,
+                        choice: None,
+                        latency_ms: Some(reply.latency_ms),
+                        error: Some(error),
+                    };
+                }
+
+                match reply.result {
+                    Ok(choice) => {
+                        self.record_success(choice, reply.latency_ms);
+                        BrainProbeOutcome {
+                            ok: true,
+                            choice: Some(choice.name()),
+                            latency_ms: Some(reply.latency_ms),
+                            error: None,
+                        }
+                    }
+                    Err(error) => {
+                        self.record_failure(error.clone());
+                        BrainProbeOutcome {
+                            ok: false,
+                            choice: None,
+                            latency_ms: Some(reply.latency_ms),
+                            error: Some(error),
+                        }
+                    }
+                }
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                self.in_flight = false;
+                let error = format!("brain probe timed out after {} ms", wait.as_millis());
+                self.record_failure(error.clone());
+                BrainProbeOutcome {
+                    ok: false,
+                    choice: None,
+                    latency_ms: None,
+                    error: Some(error),
+                }
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                self.in_flight = false;
+                let error = "brain worker disconnected during probe".to_string();
+                self.record_failure(error.clone());
+                BrainProbeOutcome {
+                    ok: false,
+                    choice: None,
+                    latency_ms: None,
+                    error: Some(error),
+                }
+            }
         }
     }
 
@@ -508,6 +646,30 @@ impl BrainController {
                 }
             }
         }
+    }
+
+    pub fn probe(&mut self, id: u64, snapshot: &EditorSnapshot) -> BrainProbeOutcome {
+        if !self.enabled {
+            return BrainProbeOutcome {
+                ok: false,
+                choice: None,
+                latency_ms: None,
+                error: Some("AI brain is disabled".into()),
+            };
+        }
+        let Some(ai) = &mut self.ai else {
+            return BrainProbeOutcome {
+                ok: false,
+                choice: None,
+                latency_ms: None,
+                error: Some(
+                    self.setup_error
+                        .clone()
+                        .unwrap_or_else(|| "AI provider is unavailable".into()),
+                ),
+            };
+        };
+        ai.probe(id, snapshot, &self.last_behavior)
     }
 
     pub fn status(&mut self) -> BrainStatus {
@@ -676,5 +838,10 @@ mod tests {
         second_snapshot.context.current_line = "different line".into();
         let second = world(second_snapshot);
         assert_ne!(semantic_key(&first), semantic_key(&second));
+    }
+
+    #[test]
+    fn probe_action_space_never_contains_hide() {
+        assert!(!probe_behaviors().contains(&AiBehavior::Hide));
     }
 }
