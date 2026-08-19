@@ -159,7 +159,8 @@ fn allowed_behaviors(world: &World) -> Vec<AiBehavior> {
     if snapshot.viewport.width < 48 || snapshot.viewport.height < 12 {
         return vec![AiBehavior::Hide];
     }
-    if snapshot.activity.typing || snapshot.mode.starts_with('i') || snapshot.mode.starts_with('R') {
+    if snapshot.activity.typing || snapshot.mode.starts_with('i') || snapshot.mode.starts_with('R')
+    {
         return vec![AiBehavior::Focus];
     }
     if snapshot.diagnostics.errors > 0 {
@@ -436,9 +437,7 @@ impl AiDirector {
         let event_due = new_event
             && major_event(world)
             && since_last
-                .map(|elapsed| {
-                    elapsed >= Duration::from_millis(self.config.event_min_interval_ms)
-                })
+                .map(|elapsed| elapsed >= Duration::from_millis(self.config.event_min_interval_ms))
                 .unwrap_or(true);
 
         if !periodic_due && !event_due {
@@ -798,7 +797,10 @@ mod tests {
         let mut snapshot = snapshot();
         snapshot.activity.typing = true;
         snapshot.diagnostics.errors = 1;
-        assert_eq!(RuleBrain.decide(&world(snapshot)).behavior, Behavior::Inspect);
+        assert_eq!(
+            RuleBrain.decide(&world(snapshot)).behavior,
+            Behavior::Inspect
+        );
     }
 
     #[test]
@@ -811,7 +813,10 @@ mod tests {
     #[test]
     fn parser_accepts_labels_and_strict_json_only() {
         let allowed = [AiBehavior::Idle, AiBehavior::Curious];
-        assert_eq!(parse_choice("curious", &allowed).unwrap(), AiBehavior::Curious);
+        assert_eq!(
+            parse_choice("curious", &allowed).unwrap(),
+            AiBehavior::Curious
+        );
         assert_eq!(parse_choice("`idle`", &allowed).unwrap(), AiBehavior::Idle);
         assert_eq!(
             parse_choice("{\"behavior\":\"idle\"}", &allowed).unwrap(),
