@@ -370,11 +370,11 @@ impl AiDirector {
                 Ok(reply) => {
                     self.in_flight = false;
                     self.last_latency_ms = Some(reply.latency_ms);
+
+                    // A probe reply visible here is necessarily late/orphaned:
+                    // ordinary probes consume their own reply synchronously. Clear the
+                    // worker busy state, but preserve the earlier timeout/failure signal.
                     if reply.probe_id.is_some() {
-                        match reply.result {
-                            Ok(choice) => self.record_success(choice, reply.latency_ms),
-                            Err(error) => self.record_failure(error),
-                        }
                         continue;
                     }
 
@@ -549,7 +549,8 @@ impl AiDirector {
                 }
             }
             Err(RecvTimeoutError::Timeout) => {
-                self.in_flight = false;
+                // Keep `in_flight` true: the provider worker may still be executing.
+                // A future poll drains the late probe reply and only then clears busy.
                 let error = format!("brain probe timed out after {} ms", wait.as_millis());
                 self.record_failure(error.clone());
                 BrainProbeOutcome {
