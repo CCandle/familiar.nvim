@@ -24,7 +24,8 @@ M.defaults = {
     base_url = nil, -- standard OpenAI-compatible base URL; /chat/completions is appended
     api_key = nil,
     api_key_env = nil,
-    headers = {}, -- custom string headers for gateways or non-Bearer auth
+    headers = {}, -- custom non-secret string headers
+    header_env = {}, -- { ["x-api-key"] = "MY_API_KEY_ENV" }
     extra_body = {}, -- vendor-specific request fields; model/messages/stream remain reserved
     interval_ms = 20000,
     event_min_interval_ms = 5000,
@@ -165,6 +166,14 @@ local function validate(resolved)
   for key, value in pairs(resolved.brain.headers) do
     if type(key) ~= "string" or key == "" or type(value) ~= "string" then
       error("familiar.nvim: brain.headers must contain non-empty string keys and string values")
+    end
+  end
+  if type(resolved.brain.header_env) ~= "table" then
+    error("familiar.nvim: brain.header_env must be a table")
+  end
+  for key, value in pairs(resolved.brain.header_env) do
+    if type(key) ~= "string" or key == "" or type(value) ~= "string" or value == "" then
+      error("familiar.nvim: brain.header_env must map non-empty header names to environment variable names")
     end
   end
   if type(resolved.brain.extra_body) ~= "table" then
