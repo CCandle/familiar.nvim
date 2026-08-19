@@ -1,8 +1,10 @@
 mod brain;
+mod model_store;
 mod protocol;
+mod provider;
 mod world;
 
-use brain::{Brain, RuleBrain};
+use brain::{Brain, BrainController, BrainStatus};
 use protocol::{CORE_VERSION, ClientMessage, PROTOCOL_VERSION, ServerMessage};
 use std::io::{self, BufRead, BufWriter, Write};
 use world::World;
@@ -25,13 +27,46 @@ fn protocol_error(out: &mut BufWriter<io::StdoutLock<'_>>, message: impl Into<St
     );
 }
 
-fn main() -> io::Result<()> {
+fn brain_status_key(status: &BrainStatus) -> String {
+    format!(
+        "{}|{}|{}|{}",
+        status.enabled,
+        status.provider,
+        status.state,
+        status.error.as_deref().unwrap_or("")
+    )
+}
+
+fn emit_brain_status(
+    out: &mut BufWriter<io::StdoutLock<'_>>,
+    brain: &mut BrainController,
+    previous: &mut Option<String>,
+) -> io::Result<()> {
+    let status = brain.status();
+    let key = brain_status_key(&status);
+    if previous.as_ref() == Some(&key) {
+        return Ok(());
+    }
+    *previous = Some(key);
+    write_message(
+        out,
+        &ServerMessage::BrainStatus {
+            enabled: status.enabled,
+            provider: status.provider,
+            state: status.state,
+            error: status.error,
+        },
+    )
+}
+
+fn run_protocol() -> io::Result<()> {
     let stdin = io::stdin();
     let stdout = io::stdout();
     let mut out = BufWriter::new(stdout.lock());
     let mut world = World::default();
-    let mut brain = RuleBrain;
+    let mut brain = BrainController::default();
     let mut handshaken = false;
+    let mut last_brain_status = None;
 
     for line in stdin.lock().lines() {
         let line = match line {
@@ -72,8 +107,18 @@ fn main() -> io::Result<()> {
                         protocol: PROTOCOL_VERSION,
                         core: "familiar-core",
                         version: CORE_VERSION,
+                        local_llama: cfg!(feature = "local-llama"),
                     },
                 )?;
+            }
+            ClientMessage::Configure { brain: config } => {
+                if !handshaken {
+                    protocol_error(&mut out, "hello required before configure");
+                    continue;
+                }
+                brain.configure(config);
+                last_brain_status = None;
+                emit_brain_status(&mut out, &mut brain, &mut last_brain_status)?;
             }
             ClientMessage::Snapshot { seq, snapshot } => {
                 if !handshaken {
@@ -84,6 +129,7 @@ fn main() -> io::Result<()> {
                 world.apply_snapshot(snapshot);
                 let intent = brain.decide(&world);
                 write_message(&mut out, &ServerMessage::Intent { seq, intent })?;
+                emit_brain_status(&mut out, &mut brain, &mut last_brain_status)?;
             }
             ClientMessage::Event { seq, event } => {
                 if !handshaken {
@@ -94,6 +140,7 @@ fn main() -> io::Result<()> {
                 world.apply_event(event);
                 let intent = brain.decide(&world);
                 write_message(&mut out, &ServerMessage::Intent { seq, intent })?;
+                emit_brain_status(&mut out, &mut brain, &mut last_brain_status)?;
             }
             ClientMessage::Ping { id } => {
                 write_message(&mut out, &ServerMessage::Pong { id })?;
@@ -103,4 +150,17 @@ fn main() -> io::Result<()> {
     }
 
     Ok(())
+}
+
+fn main() -> io::Result<()> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match model_store::run_cli(&args) {
+        Ok(true) => return Ok(()),
+        Ok(false) => {}
+        Err(error) => {
+            eprintln!("familiar-core: {error}");
+            std::process::exit(2);
+        }
+    }
+    run_protocol()
 }
