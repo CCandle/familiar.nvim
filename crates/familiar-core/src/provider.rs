@@ -169,13 +169,15 @@ impl LocalLlamaProvider {
         use std::pin::pin;
 
         let model_path = config
-            .local
+            .local_config
             .model_path
             .as_deref()
             .filter(|path| !path.is_empty())
             .ok_or_else(|| "brain.local.model_path is required for local_llama".to_string())?;
-        let backend = LlamaBackend::init().map_err(|error| format!("llama backend init failed: {error}"))?;
-        let mut params = LlamaModelParams::default().with_n_gpu_layers(config.local.n_gpu_layers);
+        let backend =
+            LlamaBackend::init().map_err(|error| format!("llama backend init failed: {error}"))?;
+        let mut params =
+            LlamaModelParams::default().with_n_gpu_layers(config.local_config.n_gpu_layers);
         let params = pin!(params);
         let model = LlamaModel::load_from_file(&backend, model_path, &params)
             .map_err(|error| format!("failed to load local model {model_path}: {error}"))?;
@@ -183,8 +185,8 @@ impl LocalLlamaProvider {
         Ok(Self {
             backend,
             model,
-            n_ctx: config.local.n_ctx.max(512),
-            n_threads: config.local.n_threads.max(1),
+            n_ctx: config.local_config.n_ctx.max(512),
+            n_threads: config.local_config.n_threads.max(1),
             temperature: config.temperature,
             max_tokens: config.max_tokens.max(1),
         })
@@ -211,7 +213,8 @@ impl LocalLlamaProvider {
         if tokens.len() >= self.n_ctx as usize {
             return Err(format!(
                 "local prompt is too large: {} tokens for n_ctx={}",
-                tokens.len(), self.n_ctx
+                tokens.len(),
+                self.n_ctx
             ));
         }
 
@@ -275,8 +278,7 @@ impl LocalLlamaProvider {
 mod tests {
     use super::*;
     use crate::protocol::{
-        ActivitySnapshot, BufferSnapshot, DiagnosticSnapshot, TextContextSnapshot,
-        ViewportSnapshot,
+        ActivitySnapshot, BufferSnapshot, DiagnosticSnapshot, TextContextSnapshot, ViewportSnapshot,
     };
 
     #[test]
@@ -299,7 +301,10 @@ mod tests {
                 botline: 20,
                 line_display_widths: vec![],
             },
-            diagnostics: DiagnosticSnapshot { errors: 1, warnings: 0 },
+            diagnostics: DiagnosticSnapshot {
+                errors: 1,
+                warnings: 0,
+            },
             activity: ActivitySnapshot {
                 idle_ms: 100,
                 typing: false,
