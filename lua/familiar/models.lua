@@ -5,6 +5,7 @@ M.default = {
   id = "smollm2-135m-instruct-q4_k_m",
   file = "SmolLM2-135M-Instruct-Q4_K_M.gguf",
   url = "https://huggingface.co/lmstudio-community/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q4_K_M.gguf",
+  sha256 = "bda484992f9655d22504b14e57985257fa6a86937c61f957cf99c10a3bcae169",
   license = "Apache-2.0",
   approx_bytes = 105000000,
 }
@@ -31,6 +32,7 @@ function M.status(model)
     path = path,
     installed = stat ~= nil and gguf_ok(path),
     bytes = stat and stat.size or 0,
+    sha256 = model.sha256,
     license = model.license,
     approx_bytes = model.approx_bytes,
   }
