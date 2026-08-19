@@ -37,10 +37,30 @@ local function truncate_chars(text, max_chars)
   return vim.fn.strcharpart(text, 0, max_chars)
 end
 
+local function contains(list, value)
+  for _, candidate in ipairs(list or {}) do
+    if candidate == value then return true end
+  end
+  return false
+end
+
+local function context_allowed(buf, opts)
+  local filetype = vim.bo[buf].filetype
+  if contains(opts.deny_filetypes, filetype) then return false end
+
+  local name = vim.api.nvim_buf_get_name(buf)
+  local basename = name ~= "" and vim.fs.basename(name) or ""
+  for _, pattern in ipairs(opts.deny_name_patterns or {}) do
+    local ok, matched = pcall(string.match, basename, pattern)
+    if ok and matched then return false end
+  end
+  return true
+end
+
 local function text_context(buf, cursor_row, config)
   local brain = config.brain or {}
   local opts = brain.context or {}
-  if not brain.enabled or opts.include_buffer_text == false then
+  if not brain.enabled or opts.include_buffer_text == false or not context_allowed(buf, opts) then
     return { current_line = "", before = {}, after = {} }
   end
 
@@ -68,9 +88,6 @@ local function text_context(buf, cursor_row, config)
   local current_index = cursor_row - first + 1
   local current_line = take(raw[current_index] or "")
 
-  -- Spend the remaining budget on the nearest surrounding lines first. This
-  -- preserves semantic locality if a very long buffer line consumes most of
-  -- the configured context budget.
   local before_reversed = {}
   for index = current_index - 1, 1, -1 do
     local line = take(raw[index] or "")
@@ -189,6 +206,7 @@ function M.snapshot(config)
   }
 end
 
+M._context_allowed = context_allowed
 M._text_context = text_context
 
 return M
