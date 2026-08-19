@@ -2,6 +2,7 @@ local M = {}
 
 local builtins = {
   mote = "familiar.avatars.mote",
+  spirit = "familiar.avatars.spirit",
   fox = "familiar.avatars.fox",
 }
 
@@ -101,24 +102,67 @@ local function validate_glyph_frames(avatar)
   end
 end
 
+local function validate_duration(value, label)
+  if type(value) == "number" then
+    if value <= 0 then fail(label .. " must be positive") end
+    return
+  end
+  if type(value) == "table" and #value == 2 then
+    if type(value[1]) ~= "number" or type(value[2]) ~= "number" or value[1] <= 0 or value[2] < value[1] then
+      fail(label .. " range must be {positive_min, max>=min}")
+    end
+    return
+  end
+  fail(label .. " must be a positive number or {min, max}")
+end
+
 local function validate_animations(avatar)
   for name, animation in pairs(avatar.animations) do
     if type(name) ~= "string" or type(animation) ~= "table" then
       fail("animation names must map to tables")
     end
-    if type(animation.frames) ~= "table" or #animation.frames == 0 then
-      fail(("animation %s must contain at least one frame"):format(name))
+
+    local has_frames = type(animation.frames) == "table" and #animation.frames > 0
+    local has_steps = type(animation.steps) == "table" and #animation.steps > 0
+    if not has_frames and not has_steps then
+      fail(("animation %s must contain frames or steps"):format(name))
     end
-    for index, frame_name in ipairs(animation.frames) do
-      if type(frame_name) ~= "string" or avatar.frames[frame_name] == nil then
-        fail(("animation %s frame %d references unknown frame %q"):format(name, index, tostring(frame_name)))
+
+    if has_frames then
+      for index, frame_name in ipairs(animation.frames) do
+        if type(frame_name) ~= "string" or avatar.frames[frame_name] == nil then
+          fail(("animation %s frame %d references unknown frame %q"):format(name, index, tostring(frame_name)))
+        end
+      end
+      if animation.frame_ms ~= nil then
+        validate_duration(animation.frame_ms, ("animation %s frame_ms"):format(name))
       end
     end
+
+    if has_steps then
+      for index, step in ipairs(animation.steps) do
+        if type(step) ~= "table" or type(step.frame) ~= "string" or avatar.frames[step.frame] == nil then
+          fail(("animation %s step %d references an unknown frame"):format(name, index))
+        end
+        validate_duration(step.duration_ms, ("animation %s step %d duration_ms"):format(name, index))
+      end
+    end
+
     if animation.loop ~= nil and type(animation.loop) ~= "boolean" then
       fail(("animation %s loop must be boolean"):format(name))
     end
     if animation.next ~= nil and avatar.animations[animation.next] == nil then
       fail(("animation %s next references unknown animation %q"):format(name, tostring(animation.next)))
+    end
+  end
+end
+
+local function validate_poses(avatar)
+  if avatar.poses == nil then return end
+  if type(avatar.poses) ~= "table" then fail("poses must be a table") end
+  for name, frame in pairs(avatar.poses) do
+    if type(name) ~= "string" or type(frame) ~= "string" or avatar.frames[frame] == nil then
+      fail(("pose %q references unknown frame %q"):format(tostring(name), tostring(frame)))
     end
   end
 end
@@ -151,6 +195,7 @@ function M.validate(avatar)
     validate_glyph_frames(avatar)
   end
 
+  validate_poses(avatar)
   validate_animations(avatar)
   return avatar
 end
@@ -166,10 +211,16 @@ function M.render_height(avatar)
   return avatar.height
 end
 
+function M.names()
+  local names = vim.tbl_keys(builtins)
+  table.sort(names)
+  return names
+end
+
 function M.load(name)
   local module = builtins[name]
   if not module then
-    error(("unknown familiar avatar: %s"):format(tostring(name)))
+    error(("unknown familiar skin: %s"):format(tostring(name)))
   end
   return M.validate(require(module))
 end

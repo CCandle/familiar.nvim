@@ -1,9 +1,19 @@
+local avatar_mod = require("familiar.avatar")
 local config_mod = require("familiar.config")
 local runtime = require("familiar.runtime")
 
 local M = {}
 local config = config_mod.resolve({})
 local commands_created = false
+
+local function set_skin(name)
+  -- Validate even when the runtime is stopped, but do not require runtime state
+  -- to exist merely to change the next-start configuration.
+  avatar_mod.load(name)
+  if runtime.status().running then runtime.set_skin(name) end
+  config.skin = name
+  return name
+end
 
 local function create_commands()
   if commands_created then return end
@@ -25,10 +35,24 @@ local function create_commands()
     vim.notify(vim.inspect(runtime.status()), vim.log.levels.INFO, { title = "familiar.nvim" })
   end, { desc = "Show familiar.nvim status" })
 
-  vim.api.nvim_create_user_command("FamiliarDemo", function(opts)
-    if not runtime.status().running then
-      runtime.start(config)
+  vim.api.nvim_create_user_command("FamiliarSkin", function(opts)
+    local name = opts.args
+    if name == "" then
+      vim.notify("familiar skin: " .. tostring(config.skin), vim.log.levels.INFO)
+      return
     end
+    local ok, err = pcall(set_skin, name)
+    if not ok then
+      vim.notify("familiar skin: " .. tostring(err), vim.log.levels.WARN)
+    end
+  end, {
+    nargs = "?",
+    desc = "Show or switch the familiar skin",
+    complete = function() return avatar_mod.names() end,
+  })
+
+  vim.api.nvim_create_user_command("FamiliarDemo", function(opts)
+    if not runtime.status().running then runtime.start(config) end
     local animation = opts.fargs[1]
     local duration_ms = opts.fargs[2] and tonumber(opts.fargs[2]) or nil
     if opts.fargs[2] and not duration_ms then
@@ -36,12 +60,10 @@ local function create_commands()
       return
     end
     local ok, err = runtime.demo(animation, duration_ms)
-    if not ok then
-      vim.notify("familiar demo: " .. tostring(err), vim.log.levels.WARN)
-    end
+    if not ok then vim.notify("familiar demo: " .. tostring(err), vim.log.levels.WARN) end
   end, {
     nargs = "+",
-    desc = "Temporarily force one avatar animation: :FamiliarDemo <animation> [duration_ms]",
+    desc = "Temporarily force one skin animation: :FamiliarDemo <animation> [duration_ms]",
     complete = function(_, cmdline)
       local _, spaces = cmdline:gsub(" ", "")
       if spaces > 1 then return {} end
@@ -61,37 +83,26 @@ function M.setup(opts)
   local group = vim.api.nvim_create_augroup("FamiliarLifecycle", { clear = true })
   vim.api.nvim_create_autocmd("VimLeavePre", {
     group = group,
-    callback = function()
-      runtime.stop()
-    end,
+    callback = function() runtime.stop() end,
   })
 
-  if config.enabled and #vim.api.nvim_list_uis() > 0 then
-    runtime.start(config)
-  end
+  if config.enabled and #vim.api.nvim_list_uis() > 0 then runtime.start(config) end
 end
 
-function M.start()
-  runtime.start(config)
-end
+function M.start() runtime.start(config) end
+function M.stop() runtime.stop() end
+function M.toggle() runtime.toggle(config) end
 
-function M.stop()
-  runtime.stop()
-end
-
-function M.toggle()
-  runtime.toggle(config)
+function M.skin(name)
+  if name == nil then return config.skin end
+  return set_skin(name)
 end
 
 function M.demo(animation, duration_ms)
-  if not runtime.status().running then
-    runtime.start(config)
-  end
+  if not runtime.status().running then runtime.start(config) end
   return runtime.demo(animation, duration_ms)
 end
 
-function M.status()
-  return runtime.status()
-end
+function M.status() return runtime.status() end
 
 return M

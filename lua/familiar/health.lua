@@ -12,17 +12,28 @@ function M.check()
   if vim.o.termguicolors then
     vim.health.ok("termguicolors is enabled")
   else
-    vim.health.warn("termguicolors is disabled; the pixel palette will be degraded")
+    vim.health.warn("termguicolors is disabled; familiar colors will be degraded")
   end
 
-  local ok_avatar, avatar = pcall(require("familiar.avatar").load, "fox")
-  if ok_avatar then
-    vim.health.ok(("default avatar loaded: %s (%dx%d logical pixels)"):format(avatar.id, avatar.width, avatar.height))
-  else
-    vim.health.error("default avatar failed validation: " .. tostring(avatar))
+  local avatar_mod = require("familiar.avatar")
+  for _, name in ipairs(avatar_mod.names()) do
+    local ok_skin, skin = pcall(avatar_mod.load, name)
+    if ok_skin then
+      vim.health.ok(("skin loaded: %s (%s, %dx%d)"):format(skin.id, skin.kind or "pixel", skin.width, skin.height))
+    else
+      vim.health.error(("skin %s failed validation: %s"):format(name, tostring(skin)))
+    end
   end
 
   local config = require("familiar.config").resolve({})
+  vim.health.info(("animation profile=%s, fps=%d, duration=%dms, easing=%s, trail=%s"):format(
+    config.animation.profile,
+    config.animation.fps,
+    config.animation.duration_ms,
+    config.animation.easing,
+    config.animation.trail.mode
+  ))
+
   local core = require("familiar.client").binary(config)
   if core then
     vim.health.ok("familiar-core found: " .. core)
@@ -35,10 +46,10 @@ function M.check()
   end
 
   local status = require("familiar").status()
-  vim.health.info(("runtime=%s, core=%s, avatar=%s"):format(
+  vim.health.info(("runtime=%s, core=%s, skin=%s"):format(
     status.running and "running" or "stopped",
     status.core and "connected" or "disconnected",
-    status.avatar or "not loaded"
+    status.skin or "not loaded"
   ))
 
   if vim.env.TERM_PROGRAM == "iTerm.app" then
