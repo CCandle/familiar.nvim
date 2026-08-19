@@ -46,6 +46,15 @@ local function resolve_binary(config)
   return nil
 end
 
+local function resolved_headers(source)
+  local headers = vim.deepcopy(source.headers or {})
+  for header, env_name in pairs(source.header_env or {}) do
+    local value = vim.env[env_name]
+    if value and value ~= "" then headers[header] = value end
+  end
+  return headers
+end
+
 local function brain_payload(config)
   local source = config.brain
   local api_key = source.api_key
@@ -63,7 +72,7 @@ local function brain_payload(config)
     endpoint = source.endpoint,
     base_url = source.base_url,
     api_key = api_key,
-    headers = vim.deepcopy(source.headers or {}),
+    headers = resolved_headers(source),
     extra_body = vim.deepcopy(source.extra_body or {}),
     interval_ms = source.interval_ms,
     event_min_interval_ms = source.event_min_interval_ms,
@@ -243,5 +252,6 @@ function M.binary(config)
 end
 
 M._brain_payload = brain_payload
+M._resolved_headers = resolved_headers
 
 return M
