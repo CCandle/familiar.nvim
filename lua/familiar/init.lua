@@ -1,5 +1,8 @@
 local avatar_mod = require("familiar.avatar")
+local brain_state = require("familiar.brain_state")
+local client = require("familiar.client")
 local config_mod = require("familiar.config")
+local models = require("familiar.models")
 local runtime = require("familiar.runtime")
 
 local M = {}
@@ -7,12 +10,34 @@ local config = config_mod.resolve({})
 local commands_created = false
 
 local function set_skin(name)
-  -- Validate even when the runtime is stopped, but do not require runtime state
-  -- to exist merely to change the next-start configuration.
   avatar_mod.load(name)
   if runtime.status().running then runtime.set_skin(name) end
   config.skin = name
   return name
+end
+
+local function brain_status()
+  return {
+    configured = {
+      enabled = config.brain.enabled,
+      provider = config.brain.provider,
+      model = config.brain.model,
+      endpoint = config.brain.endpoint,
+      interval_ms = config.brain.interval_ms,
+      include_buffer_text = config.brain.context.include_buffer_text,
+    },
+    core = brain_state.get(),
+    local_model = models.status(),
+    core_binary = client.binary(config),
+  }
+end
+
+local function notify_model_result(action, ok, message)
+  if ok then
+    vim.notify("familiar brain: " .. action .. " complete\n" .. tostring(message), vim.log.levels.INFO)
+  else
+    vim.notify("familiar brain: " .. action .. " failed\n" .. tostring(message), vim.log.levels.ERROR)
+  end
 end
 
 local function create_commands()
@@ -32,8 +57,37 @@ local function create_commands()
   end, { desc = "Toggle familiar.nvim" })
 
   vim.api.nvim_create_user_command("FamiliarStatus", function()
-    vim.notify(vim.inspect(runtime.status()), vim.log.levels.INFO, { title = "familiar.nvim" })
+    local status = runtime.status()
+    status.brain = brain_status()
+    vim.notify(vim.inspect(status), vim.log.levels.INFO, { title = "familiar.nvim" })
   end, { desc = "Show familiar.nvim status" })
+
+  vim.api.nvim_create_user_command("FamiliarBrainStatus", function()
+    vim.notify(vim.inspect(brain_status()), vim.log.levels.INFO, { title = "familiar.nvim brain" })
+  end, { desc = "Show BrainProvider and managed-model status" })
+
+  vim.api.nvim_create_user_command("FamiliarBrainInstall", function()
+    local bin = client.binary(config)
+    local model = models.default
+    vim.notify(
+      ("familiar brain: downloading %s (~%.0f MB, %s) to\n%s"):format(
+        model.id,
+        model.approx_bytes / 1000000,
+        model.license,
+        models.path(model)
+      ),
+      vim.log.levels.INFO
+    )
+    models.install(bin, model, function(ok, message)
+      notify_model_result("install", ok, message)
+    end)
+  end, { desc = "Download and verify the managed local GGUF brain model" })
+
+  vim.api.nvim_create_user_command("FamiliarBrainRemove", function()
+    models.remove(client.binary(config), models.default, function(ok, message)
+      notify_model_result("remove", ok, message)
+    end)
+  end, { desc = "Remove the managed local GGUF brain model" })
 
   vim.api.nvim_create_user_command("FamiliarSkin", function(opts)
     local name = opts.args
@@ -42,9 +96,7 @@ local function create_commands()
       return
     end
     local ok, err = pcall(set_skin, name)
-    if not ok then
-      vim.notify("familiar skin: " .. tostring(err), vim.log.levels.WARN)
-    end
+    if not ok then vim.notify("familiar skin: " .. tostring(err), vim.log.levels.WARN) end
   end, {
     nargs = "?",
     desc = "Show or switch the familiar skin",
@@ -98,11 +150,19 @@ function M.skin(name)
   return set_skin(name)
 end
 
+function M.brain_status()
+  return brain_status()
+end
+
 function M.demo(animation, duration_ms)
   if not runtime.status().running then runtime.start(config) end
   return runtime.demo(animation, duration_ms)
 end
 
-function M.status() return runtime.status() end
+function M.status()
+  local status = runtime.status()
+  status.brain = brain_status()
+  return status
+end
 
 return M
