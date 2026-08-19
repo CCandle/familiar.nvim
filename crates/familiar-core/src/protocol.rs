@@ -58,8 +58,8 @@ pub struct BrainConfig {
     pub max_tokens: u32,
     #[serde(default = "default_temperature")]
     pub temperature: f32,
-    #[serde(default)]
-    pub local: LocalBrainConfig,
+    #[serde(default, rename = "local")]
+    pub local_config: LocalBrainConfig,
 }
 
 impl Default for BrainConfig {
@@ -76,7 +76,7 @@ impl Default for BrainConfig {
             timeout_ms: default_timeout_ms(),
             max_tokens: default_max_tokens(),
             temperature: default_temperature(),
-            local: LocalBrainConfig::default(),
+            local_config: LocalBrainConfig::default(),
         }
     }
 }
