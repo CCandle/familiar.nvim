@@ -20,15 +20,19 @@ jobs:
       - run: cargo test --workspace
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo build --release -p familiar-core
+      - name: Check optional embedded llama backend
+        run: cargo check -p familiar-core --features local-llama
       - name: Core protocol smoke test
         run: |
           output="$(printf '%s\n' \
-            '{"type":"hello","protocol":1,"client":"ci"}' \
+            '{"type":"hello","protocol":2,"client":"ci"}' \
+            '{"type":"configure","brain":{"enabled":false,"provider":"rule"}}' \
             '{"type":"ping","id":7}' \
             '{"type":"shutdown"}' \
             | target/release/familiar-core)"
           printf '%s\n' "$output"
           grep -q '"type":"ready"' <<<"$output"
+          grep -q '"type":"brain_status"' <<<"$output"
           grep -q '"type":"pong"' <<<"$output"
 
   neovim:
