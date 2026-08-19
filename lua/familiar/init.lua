@@ -4,6 +4,7 @@ local client = require("familiar.client")
 local config_mod = require("familiar.config")
 local models = require("familiar.models")
 local runtime = require("familiar.runtime")
+local telemetry = require("familiar.telemetry")
 
 local M = {}
 local config = config_mod.resolve({})
@@ -52,6 +53,28 @@ local function reload_brain()
   return ok, ok and "BrainProvider configuration reloaded" or "failed to send BrainProvider configuration"
 end
 
+local function test_brain(callback)
+  callback = callback or function() end
+  if not config.brain.enabled or config.brain.provider == "rule" then
+    callback({ ok = false, error = "AI brain is disabled; choose local_llama, ollama, or openai_compatible first" })
+    return false
+  end
+
+  if not runtime.status().running then runtime.start(config) end
+  if not client.running() then
+    callback({ ok = false, error = "familiar-core is unavailable; the AI providers require the Rust sidecar" })
+    return false
+  end
+
+  local snapshot = telemetry.snapshot(config)
+  if not snapshot then
+    callback({ ok = false, error = "no ordinary editor buffer is available for the brain probe" })
+    return false
+  end
+
+  return client.probe(snapshot, callback)
+end
+
 local function notify_model_result(action, ok, message)
   if ok then
     vim.notify("familiar brain: " .. action .. " complete\n" .. tostring(message), vim.log.levels.INFO)
@@ -90,6 +113,30 @@ local function create_commands()
     local ok, message = reload_brain()
     vim.notify("familiar brain: " .. message, ok and vim.log.levels.INFO or vim.log.levels.WARN)
   end, { desc = "Reload BrainProvider configuration and environment-sourced credentials" })
+
+  vim.api.nvim_create_user_command("FamiliarBrainTest", function()
+    vim.notify(
+      ("familiar brain: probing %s%s …"):format(
+        config.brain.provider,
+        config.brain.model and (" / " .. config.brain.model) or ""
+      ),
+      vim.log.levels.INFO
+    )
+    test_brain(function(result)
+      if result.ok then
+        vim.notify(
+          ("familiar brain: probe PASS\nprovider=%s  choice=%s  latency=%sms"):format(
+            config.brain.provider,
+            tostring(result.choice),
+            tostring(result.latency_ms)
+          ),
+          vim.log.levels.INFO
+        )
+      else
+        vim.notify("familiar brain: probe FAIL\n" .. tostring(result.error), vim.log.levels.ERROR)
+      end
+    end)
+  end, { desc = "Run one side-effect-free inference through the configured BrainProvider" })
 
   vim.api.nvim_create_user_command("FamiliarBrainInstall", function()
     local bin = client.binary(config)
@@ -182,6 +229,10 @@ end
 
 function M.brain_reload()
   return reload_brain()
+end
+
+function M.brain_test(callback)
+  return test_brain(callback)
 end
 
 function M.brain_status()
