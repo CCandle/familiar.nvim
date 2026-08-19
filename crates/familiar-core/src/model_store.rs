@@ -1,3 +1,4 @@
+use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -5,8 +6,25 @@ use std::path::{Path, PathBuf};
 pub const DEFAULT_MODEL_ID: &str = "smollm2-135m-instruct-q4_k_m";
 pub const DEFAULT_MODEL_FILE: &str = "SmolLM2-135M-Instruct-Q4_K_M.gguf";
 pub const DEFAULT_MODEL_URL: &str = "https://huggingface.co/lmstudio-community/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q4_K_M.gguf";
+pub const DEFAULT_MODEL_SHA256: &str = "bda484992f9655d22504b14e57985257fa6a86937c61f957cf99c10a3bcae169";
 pub const DEFAULT_MODEL_LICENSE: &str = "Apache-2.0";
 pub const DEFAULT_MODEL_APPROX_BYTES: u64 = 105_000_000;
+
+fn sha256(path: &Path) -> Result<String, String> {
+    let mut file = File::open(path).map_err(|error| format!("open for checksum failed: {error}"))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let count = file
+            .read(&mut buffer)
+            .map_err(|error| format!("checksum read failed: {error}"))?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
 
 fn validate_gguf(path: &Path) -> Result<u64, String> {
     let metadata = fs::metadata(path).map_err(|error| format!("stat failed: {error}"))?;
@@ -21,6 +39,13 @@ fn validate_gguf(path: &Path) -> Result<u64, String> {
         .map_err(|error| format!("failed reading GGUF header: {error}"))?;
     if &magic != b"GGUF" {
         return Err("downloaded file is not a GGUF model".into());
+    }
+
+    let actual = sha256(path)?;
+    if actual != DEFAULT_MODEL_SHA256 {
+        return Err(format!(
+            "model SHA-256 mismatch: expected {DEFAULT_MODEL_SHA256}, got {actual}"
+        ));
     }
     Ok(size)
 }
@@ -84,19 +109,21 @@ pub fn run_cli(args: &[String]) -> Result<bool, String> {
             let url = args.get(3).map(String::as_str).unwrap_or(DEFAULT_MODEL_URL);
             let size = install(&path, url)?;
             println!(
-                "{{\"ok\":true,\"action\":\"install\",\"model\":\"{}\",\"bytes\":{},\"path\":{}}}",
+                "{{\"ok\":true,\"action\":\"install\",\"model\":\"{}\",\"bytes\":{},\"sha256\":\"{}\",\"path\":{}}}",
                 DEFAULT_MODEL_ID,
                 size,
+                DEFAULT_MODEL_SHA256,
                 serde_json::to_string(&path.display().to_string()).unwrap_or_else(|_| "\"\"".into())
             );
         }
         "status" => {
             let size = status(&path)?;
             println!(
-                "{{\"ok\":true,\"action\":\"status\",\"model\":\"{}\",\"installed\":{},\"bytes\":{},\"path\":{}}}",
+                "{{\"ok\":true,\"action\":\"status\",\"model\":\"{}\",\"installed\":{},\"bytes\":{},\"sha256\":\"{}\",\"path\":{}}}",
                 DEFAULT_MODEL_ID,
                 size.is_some(),
                 size.unwrap_or(0),
+                DEFAULT_MODEL_SHA256,
                 serde_json::to_string(&path.display().to_string()).unwrap_or_else(|_| "\"\"".into())
             );
         }
@@ -122,6 +149,7 @@ mod tests {
     fn manifest_is_pinned_to_expected_small_model() {
         assert_eq!(DEFAULT_MODEL_ID, "smollm2-135m-instruct-q4_k_m");
         assert!(DEFAULT_MODEL_URL.contains("SmolLM2-135M-Instruct-Q4_K_M.gguf"));
+        assert_eq!(DEFAULT_MODEL_SHA256.len(), 64);
         assert_eq!(DEFAULT_MODEL_LICENSE, "Apache-2.0");
         assert!(DEFAULT_MODEL_APPROX_BYTES < 120_000_000);
     }
