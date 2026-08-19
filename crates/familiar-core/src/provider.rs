@@ -47,6 +47,25 @@ Choose the most natural low-distraction behavior. Output only the label, with no
     )
 }
 
+fn label_grammar(allowed: &[&str]) -> Result<String, String> {
+    if allowed.is_empty() {
+        return Err("cannot construct a local grammar from an empty behavior set".into());
+    }
+
+    let mut alternatives = Vec::with_capacity(allowed.len());
+    for label in allowed {
+        if label.is_empty()
+            || !label
+                .chars()
+                .all(|ch| ch.is_ascii_lowercase() || ch == '_')
+        {
+            return Err(format!("unsafe behavior label for local grammar: {label:?}"));
+        }
+        alternatives.push(format!("\"{label}\""));
+    }
+    Ok(format!("root ::= {}", alternatives.join(" | ")))
+}
+
 pub enum ProviderEngine {
     OpenAi(OpenAiCompatibleProvider),
     #[cfg(feature = "local-llama")]
@@ -73,11 +92,11 @@ impl ProviderEngine {
         }
     }
 
-    pub fn query(&mut self, prompt: &str) -> Result<String, String> {
+    pub fn query(&mut self, prompt: &str, allowed: &[&str]) -> Result<String, String> {
         match self {
             Self::OpenAi(provider) => provider.query(prompt),
             #[cfg(feature = "local-llama")]
-            Self::Local(provider) => provider.query(prompt),
+            Self::Local(provider) => provider.query(prompt, allowed),
         }
     }
 }
@@ -250,7 +269,7 @@ impl LocalLlamaProvider {
         })
     }
 
-    pub fn query(&mut self, prompt: &str) -> Result<String, String> {
+    pub fn query(&mut self, prompt: &str, allowed: &[&str]) -> Result<String, String> {
         use llama_cpp_4::prelude::*;
         use std::num::NonZeroU32;
 
@@ -293,16 +312,19 @@ impl LocalLlamaProvider {
         ctx.decode(&mut batch)
             .map_err(|error| format!("local prompt decode failed: {error}"))?;
 
-        let sampler = if self.temperature <= 0.0 {
-            LlamaSampler::chain_simple([LlamaSampler::greedy()])
+        let grammar = label_grammar(allowed)?;
+        let mut samplers = vec![LlamaSampler::grammar(&self.model, &grammar, "root")];
+        if self.temperature <= 0.0 {
+            samplers.push(LlamaSampler::greedy());
         } else {
-            LlamaSampler::chain_simple([
+            samplers.extend([
                 LlamaSampler::top_k(20),
                 LlamaSampler::top_p(0.9, 1),
                 LlamaSampler::temp(self.temperature),
                 LlamaSampler::dist(0),
-            ])
-        };
+            ]);
+        }
+        let sampler = LlamaSampler::chain_simple(samplers);
 
         let mut output = String::new();
         let mut pos = tokens.len() as i32;
@@ -407,5 +429,15 @@ mod tests {
             }]
         });
         assert_eq!(extract_content(&value).unwrap(), "curious");
+    }
+
+    #[test]
+    fn local_label_grammar_is_exact_and_rejects_unsafe_labels() {
+        assert_eq!(
+            label_grammar(&["idle", "focus", "curious"]).unwrap(),
+            "root ::= \"idle\" | \"focus\" | \"curious\""
+        );
+        assert!(label_grammar(&[]).is_err());
+        assert!(label_grammar(&["idle\" | shell"]).is_err());
     }
 }
