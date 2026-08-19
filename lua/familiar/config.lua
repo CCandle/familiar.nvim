@@ -23,6 +23,7 @@ M.defaults = {
     endpoint = nil,
     api_key = nil,
     api_key_env = nil,
+    extra_body = {}, -- provider-specific OpenAI-compatible fields; reserved core fields cannot be replaced
     interval_ms = 20000,
     event_min_interval_ms = 5000,
     choice_ttl_ms = 30000,
@@ -149,6 +150,9 @@ local function validate(resolved)
   }
   if not providers[resolved.brain.provider] then
     error(("familiar.nvim: unknown brain provider %q"):format(tostring(resolved.brain.provider)))
+  end
+  if type(resolved.brain.extra_body) ~= "table" then
+    error("familiar.nvim: brain.extra_body must be a table")
   end
   if resolved.brain.interval_ms < 1000 then
     error("familiar.nvim: brain.interval_ms must be >= 1000")
