@@ -10,6 +10,8 @@ local state = {
   on_message = nil,
   on_exit = nil,
   config = nil,
+  next_probe_id = 0,
+  probes = {},
 }
 
 local function debug_log(message)
@@ -78,6 +80,25 @@ local function brain_payload(config)
   }
 end
 
+local function call_probe(callback, result)
+  if not callback then return end
+  local ok, error = pcall(callback, result)
+  if not ok then debug_log("brain probe callback failed: " .. tostring(error)) end
+end
+
+local function fail_probes(message)
+  local pending = state.probes
+  state.probes = {}
+  for id, callback in pairs(pending) do
+    call_probe(callback, {
+      type = "brain_probe_result",
+      id = id,
+      ok = false,
+      error = message,
+    })
+  end
+end
+
 local function handle_line(line)
   if line == "" then return end
   local ok, message = pcall(vim.json.decode, line)
@@ -85,7 +106,13 @@ local function handle_line(line)
     debug_log("invalid core message: " .. tostring(message))
     return
   end
+
   brain_state.handle(message)
+  if message.type == "brain_probe_result" and message.id then
+    local callback = state.probes[message.id]
+    state.probes[message.id] = nil
+    call_probe(callback, message)
+  end
   if state.on_message then state.on_message(message) end
 end
 
@@ -123,6 +150,7 @@ function M.start(config, on_message, on_exit)
   brain_state.reset()
   state.carry = ""
   state.stderr_carry = ""
+  state.probes = {}
   local job
   job = vim.fn.jobstart({ bin }, {
     stdout_buffered = false,
@@ -133,6 +161,7 @@ function M.start(config, on_message, on_exit)
       local was_current = state.job == job
       if was_current then state.job = nil end
       brain_state.disconnected()
+      fail_probes("familiar-core exited before the probe completed")
       if state.on_exit then
         vim.schedule(function() state.on_exit(code, signal) end)
       end
@@ -165,12 +194,36 @@ function M.configure(config)
   state.config = config
   if not M.running() then return false end
   brain_state.reconfiguring(config.brain.provider, config.brain.enabled)
+  fail_probes("BrainProvider was reconfigured while the probe was pending")
   return M.send({ type = "configure", brain = brain_payload(config) })
+end
+
+function M.probe(snapshot, callback)
+  if not M.running() then
+    call_probe(callback, { type = "brain_probe_result", ok = false, error = "familiar-core is not running" })
+    return false
+  end
+  if type(snapshot) ~= "table" then
+    call_probe(callback, { type = "brain_probe_result", ok = false, error = "brain probe requires an editor snapshot" })
+    return false
+  end
+
+  state.next_probe_id = state.next_probe_id + 1
+  local id = state.next_probe_id
+  state.probes[id] = callback or function() end
+  if not M.send({ type = "brain_probe", id = id, snapshot = snapshot }) then
+    local pending = state.probes[id]
+    state.probes[id] = nil
+    call_probe(pending, { type = "brain_probe_result", id = id, ok = false, error = "failed to send brain probe" })
+    return false
+  end
+  return true, id
 end
 
 function M.stop()
   local job = state.job
   if not job or job <= 0 then return end
+  fail_probes("familiar-core stopped before the probe completed")
   M.send({ type = "shutdown" })
   brain_state.disconnected()
   vim.defer_fn(function()
