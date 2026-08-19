@@ -35,6 +35,14 @@ jobs:
           grep -q '"type":"brain_status"' <<<"$output"
           grep -q '"type":"pong"' <<<"$output"
 
+  rust-macos-local-llama:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check embedded llama Metal backend on macOS
+        run: cargo check -p familiar-core --features local-llama
+
   neovim:
     runs-on: ubuntu-latest
     steps:
