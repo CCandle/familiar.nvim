@@ -47,6 +47,7 @@ Choose the most natural low-distraction behavior. Output only the label, with no
     )
 }
 
+#[cfg(any(feature = "local-llama", test))]
 fn label_grammar(allowed: &[&str]) -> Result<String, String> {
     if allowed.is_empty() {
         return Err("cannot construct a local grammar from an empty behavior set".into());
@@ -92,11 +93,11 @@ impl ProviderEngine {
         }
     }
 
-    pub fn query(&mut self, prompt: &str, allowed: &[&str]) -> Result<String, String> {
+    pub fn query(&mut self, prompt: &str, _allowed: &[&str]) -> Result<String, String> {
         match self {
             Self::OpenAi(provider) => provider.query(prompt),
             #[cfg(feature = "local-llama")]
-            Self::Local(provider) => provider.query(prompt, allowed),
+            Self::Local(provider) => provider.query(prompt, _allowed),
         }
     }
 }
