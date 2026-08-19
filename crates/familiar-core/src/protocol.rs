@@ -1,12 +1,114 @@
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 pub const CORE_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+fn default_provider() -> String {
+    "rule".into()
+}
+fn default_interval_ms() -> u64 {
+    20_000
+}
+fn default_event_min_interval_ms() -> u64 {
+    5_000
+}
+fn default_choice_ttl_ms() -> u64 {
+    30_000
+}
+fn default_timeout_ms() -> u64 {
+    8_000
+}
+fn default_max_tokens() -> u32 {
+    8
+}
+fn default_temperature() -> f32 {
+    0.15
+}
+fn default_n_ctx() -> u32 {
+    2_048
+}
+fn default_n_threads() -> i32 {
+    4
+}
+fn default_n_gpu_layers() -> u32 {
+    99
+}
+
+#[derive(Clone, Deserialize)]
+pub struct BrainConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_provider")]
+    pub provider: String,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub endpoint: Option<String>,
+    #[serde(default)]
+    pub api_key: Option<String>,
+    #[serde(default = "default_interval_ms")]
+    pub interval_ms: u64,
+    #[serde(default = "default_event_min_interval_ms")]
+    pub event_min_interval_ms: u64,
+    #[serde(default = "default_choice_ttl_ms")]
+    pub choice_ttl_ms: u64,
+    #[serde(default = "default_timeout_ms")]
+    pub timeout_ms: u64,
+    #[serde(default = "default_max_tokens")]
+    pub max_tokens: u32,
+    #[serde(default = "default_temperature")]
+    pub temperature: f32,
+    #[serde(default)]
+    pub local: LocalBrainConfig,
+}
+
+impl Default for BrainConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            provider: default_provider(),
+            model: None,
+            endpoint: None,
+            api_key: None,
+            interval_ms: default_interval_ms(),
+            event_min_interval_ms: default_event_min_interval_ms(),
+            choice_ttl_ms: default_choice_ttl_ms(),
+            timeout_ms: default_timeout_ms(),
+            max_tokens: default_max_tokens(),
+            temperature: default_temperature(),
+            local: LocalBrainConfig::default(),
+        }
+    }
+}
+
+#[derive(Clone, Deserialize)]
+pub struct LocalBrainConfig {
+    #[serde(default)]
+    pub model_path: Option<String>,
+    #[serde(default = "default_n_ctx")]
+    pub n_ctx: u32,
+    #[serde(default = "default_n_threads")]
+    pub n_threads: i32,
+    #[serde(default = "default_n_gpu_layers")]
+    pub n_gpu_layers: u32,
+}
+
+impl Default for LocalBrainConfig {
+    fn default() -> Self {
+        Self {
+            model_path: None,
+            n_ctx: default_n_ctx(),
+            n_threads: default_n_threads(),
+            n_gpu_layers: default_n_gpu_layers(),
+        }
+    }
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMessage {
     Hello { protocol: u32, client: String },
+    Configure { brain: BrainConfig },
     Snapshot { seq: u64, snapshot: EditorSnapshot },
     Event { seq: u64, event: EditorEvent },
     Ping { id: u64 },
@@ -21,6 +123,19 @@ pub struct EditorSnapshot {
     pub viewport: ViewportSnapshot,
     pub diagnostics: DiagnosticSnapshot,
     pub activity: ActivitySnapshot,
+    #[serde(default)]
+    pub context: TextContextSnapshot,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[allow(dead_code)]
+pub struct TextContextSnapshot {
+    #[serde(default)]
+    pub current_line: String,
+    #[serde(default)]
+    pub before: Vec<String>,
+    #[serde(default)]
+    pub after: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -75,10 +190,18 @@ pub enum ServerMessage {
         protocol: u32,
         core: &'static str,
         version: &'static str,
+        local_llama: bool,
     },
     Intent {
         seq: u64,
         intent: BehaviorIntent,
+    },
+    BrainStatus {
+        enabled: bool,
+        provider: String,
+        state: &'static str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
     },
     Pong {
         id: u64,
