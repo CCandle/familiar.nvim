@@ -152,6 +152,26 @@ fn run_protocol() -> io::Result<()> {
                 write_message(&mut out, &ServerMessage::Intent { seq, intent })?;
                 emit_brain_status(&mut out, &mut brain, &mut last_brain_status)?;
             }
+            ClientMessage::BrainProbe { id, snapshot } => {
+                if !handshaken {
+                    protocol_error(&mut out, "hello required before brain_probe");
+                    continue;
+                }
+
+                let result = brain.probe(id, &snapshot);
+                write_message(
+                    &mut out,
+                    &ServerMessage::BrainProbeResult {
+                        id,
+                        ok: result.ok,
+                        choice: result.choice,
+                        latency_ms: result.latency_ms,
+                        error: result.error,
+                    },
+                )?;
+                last_brain_status = None;
+                emit_brain_status(&mut out, &mut brain, &mut last_brain_status)?;
+            }
             ClientMessage::Ping { id } => {
                 write_message(&mut out, &ServerMessage::Pong { id })?;
             }
