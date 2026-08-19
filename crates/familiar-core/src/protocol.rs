@@ -34,7 +34,7 @@ fn default_n_gpu_layers() -> u32 {
     99
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct BrainConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -81,7 +81,7 @@ impl Default for BrainConfig {
     }
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct LocalBrainConfig {
     #[serde(default)]
     pub model_path: Option<String>,
