@@ -1,6 +1,7 @@
 use crate::protocol::{Behavior, BehaviorIntent, BrainConfig, Locomotion, Mood, Target};
 use crate::provider::{PolicyRequest, ProviderEngine, build_prompt};
 use crate::world::World;
+use serde_json::Value;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -166,17 +167,42 @@ fn allowed_behaviors(world: &World) -> Vec<AiBehavior> {
     allowed
 }
 
+fn match_choice(candidate: &str, allowed: &[AiBehavior]) -> Option<AiBehavior> {
+    allowed
+        .iter()
+        .copied()
+        .find(|choice| choice.name().eq_ignore_ascii_case(candidate.trim()))
+}
+
 fn parse_choice(raw: &str, allowed: &[AiBehavior]) -> Result<AiBehavior, String> {
-    let lower = raw.to_ascii_lowercase();
-    for token in lower.split(|ch: char| !ch.is_ascii_alphabetic()) {
-        if token.is_empty() {
-            continue;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("model returned an empty behavior".into());
+    }
+
+    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+        if let Some(candidate) = value.as_str() {
+            if let Some(choice) = match_choice(candidate, allowed) {
+                return Ok(choice);
+            }
         }
-        if let Some(choice) = allowed.iter().copied().find(|choice| choice.name() == token) {
-            return Ok(choice);
+        if let Some(candidate) = value.get("behavior").and_then(Value::as_str) {
+            if let Some(choice) = match_choice(candidate, allowed) {
+                return Ok(choice);
+            }
+            return Err(format!("model returned forbidden behavior: {candidate:?}"));
         }
     }
-    Err(format!("model returned no allowed behavior: {raw:?}"))
+
+    let candidate = trimmed.trim_matches(|ch: char| {
+        matches!(ch, '`' | '\'' | '"' | '.' | ':' | ';' | ',' | ' ' | '\t' | '\r' | '\n')
+    });
+    if !candidate.chars().all(|ch| ch.is_ascii_alphabetic() || ch == '_') {
+        return Err(format!("model returned non-label output: {raw:?}"));
+    }
+
+    match_choice(candidate, allowed)
+        .ok_or_else(|| format!("model returned no allowed behavior: {raw:?}"))
 }
 
 fn major_event(world: &World) -> bool {
@@ -195,6 +221,7 @@ struct AiJob {
 
 struct AiReply {
     result: Result<AiBehavior, String>,
+    latency_ms: u64,
 }
 
 struct AiDirector {
@@ -206,6 +233,12 @@ struct AiDirector {
     last_event_generation: u64,
     cached: Option<(AiBehavior, Instant)>,
     last_error: Option<String>,
+    backoff_until: Option<Instant>,
+    last_latency_ms: Option<u64>,
+    last_choice: Option<&'static str>,
+    consecutive_failures: u32,
+    total_requests: u64,
+    total_successes: u64,
 }
 
 impl AiDirector {
@@ -219,13 +252,18 @@ impl AiDirector {
             .spawn(move || {
                 let mut provider = ProviderEngine::from_config(&worker_config);
                 for job in job_rx {
+                    let started = Instant::now();
                     let result = match &mut provider {
                         Ok(provider) => provider
                             .query(&job.prompt)
                             .and_then(|raw| parse_choice(&raw, &job.allowed)),
                         Err(error) => Err(error.clone()),
                     };
-                    if reply_tx.send(AiReply { result }).is_err() {
+                    let latency_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
+                    if reply_tx
+                        .send(AiReply { result, latency_ms })
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -241,7 +279,18 @@ impl AiDirector {
             last_event_generation: 0,
             cached: None,
             last_error: None,
+            backoff_until: None,
+            last_latency_ms: None,
+            last_choice: None,
+            consecutive_failures: 0,
+            total_requests: 0,
+            total_successes: 0,
         })
+    }
+
+    fn failure_backoff(&self) -> Duration {
+        let exponent = self.consecutive_failures.saturating_sub(1).min(5);
+        Duration::from_millis((2_000_u64.saturating_mul(1_u64 << exponent)).min(60_000))
     }
 
     fn poll(&mut self) {
@@ -249,15 +298,22 @@ impl AiDirector {
             match self.receiver.try_recv() {
                 Ok(reply) => {
                     self.in_flight = false;
+                    self.last_latency_ms = Some(reply.latency_ms);
                     match reply.result {
                         Ok(choice) => {
                             self.cached = Some((
                                 choice,
                                 Instant::now() + Duration::from_millis(self.config.choice_ttl_ms),
                             ));
+                            self.last_choice = Some(choice.name());
                             self.last_error = None;
+                            self.backoff_until = None;
+                            self.consecutive_failures = 0;
+                            self.total_successes = self.total_successes.saturating_add(1);
                         }
                         Err(error) => {
+                            self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+                            self.backoff_until = Some(Instant::now() + self.failure_backoff());
                             eprintln!("familiar-core: AI provider: {error}");
                             self.last_error = Some(error);
                         }
@@ -267,6 +323,7 @@ impl AiDirector {
                 Err(TryRecvError::Disconnected) => {
                     self.in_flight = false;
                     self.last_error = Some("brain worker disconnected".into());
+                    self.consecutive_failures = self.consecutive_failures.saturating_add(1);
                     break;
                 }
             }
@@ -292,12 +349,16 @@ impl AiDirector {
             return;
         }
 
+        let now = Instant::now();
+        if self.backoff_until.is_some_and(|until| now < until) {
+            return;
+        }
+
         let allowed = allowed_behaviors(world);
         if allowed.len() <= 1 {
             return;
         }
 
-        let now = Instant::now();
         let since_last = self.last_query.map(|last| now.duration_since(last));
         let periodic_due = since_last
             .map(|elapsed| elapsed >= Duration::from_millis(self.config.interval_ms))
@@ -306,7 +367,9 @@ impl AiDirector {
         let event_due = new_event
             && major_event(world)
             && since_last
-                .map(|elapsed| elapsed >= Duration::from_millis(self.config.event_min_interval_ms))
+                .map(|elapsed| {
+                    elapsed >= Duration::from_millis(self.config.event_min_interval_ms)
+                })
                 .unwrap_or(true);
 
         if !periodic_due && !event_due {
@@ -323,6 +386,7 @@ impl AiDirector {
             self.in_flight = true;
             self.last_query = Some(now);
             self.last_event_generation = world.event_generation;
+            self.total_requests = self.total_requests.saturating_add(1);
         } else {
             self.last_error = Some("brain worker queue is unavailable".into());
         }
@@ -337,7 +401,9 @@ impl AiDirector {
     }
 
     fn state(&self) -> &'static str {
-        if self.last_error.is_some() {
+        if self.last_error.is_some() && self.cached.is_some() {
+            "degraded"
+        } else if self.last_error.is_some() {
             "error"
         } else if self.in_flight {
             "querying"
@@ -354,6 +420,11 @@ pub struct BrainStatus {
     pub provider: String,
     pub state: &'static str,
     pub error: Option<String>,
+    pub last_latency_ms: Option<u64>,
+    pub last_choice: Option<&'static str>,
+    pub consecutive_failures: u32,
+    pub total_requests: u64,
+    pub total_successes: u64,
 }
 
 pub struct BrainController {
@@ -404,6 +475,11 @@ impl BrainController {
                 provider: self.provider.clone(),
                 state: ai.state(),
                 error: ai.last_error.clone(),
+                last_latency_ms: ai.last_latency_ms,
+                last_choice: ai.last_choice,
+                consecutive_failures: ai.consecutive_failures,
+                total_requests: ai.total_requests,
+                total_successes: ai.total_successes,
             };
         }
         BrainStatus {
@@ -417,6 +493,11 @@ impl BrainController {
                 "disabled"
             },
             error: self.setup_error.clone(),
+            last_latency_ms: None,
+            last_choice: None,
+            consecutive_failures: u32::from(self.setup_error.is_some()),
+            total_requests: 0,
+            total_successes: 0,
         }
     }
 }
@@ -525,11 +606,17 @@ mod tests {
     }
 
     #[test]
-    fn parser_accepts_only_allowed_labels() {
+    fn parser_accepts_labels_and_strict_json_only() {
         let allowed = [AiBehavior::Idle, AiBehavior::Curious];
         assert_eq!(parse_choice("curious", &allowed).unwrap(), AiBehavior::Curious);
+        assert_eq!(parse_choice("`idle`", &allowed).unwrap(), AiBehavior::Idle);
+        assert_eq!(
+            parse_choice("{\"behavior\":\"idle\"}", &allowed).unwrap(),
+            AiBehavior::Idle
+        );
         assert!(parse_choice("inspect", &allowed).is_err());
-        assert_eq!(parse_choice("{\"behavior\":\"idle\"}", &allowed).unwrap(), AiBehavior::Idle);
+        assert!(parse_choice("I think curious is best", &allowed).is_err());
+        assert!(parse_choice("not curious; idle", &allowed).is_err());
     }
 
     #[test]
