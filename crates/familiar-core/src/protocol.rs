@@ -119,11 +119,28 @@ impl Default for LocalBrainConfig {
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMessage {
-    Hello { protocol: u32, client: String },
-    Configure { brain: BrainConfig },
-    Snapshot { seq: u64, snapshot: EditorSnapshot },
-    Event { seq: u64, event: EditorEvent },
-    Ping { id: u64 },
+    Hello {
+        protocol: u32,
+        client: String,
+    },
+    Configure {
+        brain: BrainConfig,
+    },
+    Snapshot {
+        seq: u64,
+        snapshot: EditorSnapshot,
+    },
+    Event {
+        seq: u64,
+        event: EditorEvent,
+    },
+    BrainProbe {
+        id: u64,
+        snapshot: EditorSnapshot,
+    },
+    Ping {
+        id: u64,
+    },
     Shutdown,
 }
 
@@ -221,6 +238,16 @@ pub enum ServerMessage {
         consecutive_failures: u32,
         total_requests: u64,
         total_successes: u64,
+    },
+    BrainProbeResult {
+        id: u64,
+        ok: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        choice: Option<&'static str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        latency_ms: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
     },
     Pong {
         id: u64,
