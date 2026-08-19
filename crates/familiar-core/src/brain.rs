@@ -2,6 +2,8 @@ use crate::protocol::{Behavior, BehaviorIntent, BrainConfig, Locomotion, Mood, T
 use crate::provider::{PolicyRequest, ProviderEngine, build_prompt};
 use crate::world::World;
 use serde_json::Value;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -167,6 +169,25 @@ fn allowed_behaviors(world: &World) -> Vec<AiBehavior> {
     allowed
 }
 
+fn semantic_key(world: &World) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    let Some(snapshot) = world.snapshot.as_ref() else {
+        return hasher.finish();
+    };
+
+    snapshot.mode.hash(&mut hasher);
+    snapshot.buffer.id.hash(&mut hasher);
+    snapshot.buffer.filetype.hash(&mut hasher);
+    snapshot.buffer.modified.hash(&mut hasher);
+    snapshot.diagnostics.errors.hash(&mut hasher);
+    snapshot.diagnostics.warnings.hash(&mut hasher);
+    snapshot.activity.typing.hash(&mut hasher);
+    snapshot.context.current_line.hash(&mut hasher);
+    snapshot.context.before.hash(&mut hasher);
+    snapshot.context.after.hash(&mut hasher);
+    hasher.finish()
+}
+
 fn match_choice(candidate: &str, allowed: &[AiBehavior]) -> Option<AiBehavior> {
     allowed
         .iter()
@@ -195,9 +216,15 @@ fn parse_choice(raw: &str, allowed: &[AiBehavior]) -> Result<AiBehavior, String>
     }
 
     let candidate = trimmed.trim_matches(|ch: char| {
-        matches!(ch, '`' | '\'' | '"' | '.' | ':' | ';' | ',' | ' ' | '\t' | '\r' | '\n')
+        matches!(
+            ch,
+            '`' | '\'' | '"' | '.' | ':' | ';' | ',' | ' ' | '\t' | '\r' | '\n'
+        )
     });
-    if !candidate.chars().all(|ch| ch.is_ascii_alphabetic() || ch == '_') {
+    if !candidate
+        .chars()
+        .all(|ch| ch.is_ascii_alphabetic() || ch == '_')
+    {
         return Err(format!("model returned non-label output: {raw:?}"));
     }
 
@@ -217,11 +244,13 @@ fn major_event(world: &World) -> bool {
 struct AiJob {
     prompt: String,
     allowed: Vec<AiBehavior>,
+    semantic_key: u64,
 }
 
 struct AiReply {
     result: Result<AiBehavior, String>,
     latency_ms: u64,
+    semantic_key: u64,
 }
 
 struct AiDirector {
@@ -231,7 +260,7 @@ struct AiDirector {
     in_flight: bool,
     last_query: Option<Instant>,
     last_event_generation: u64,
-    cached: Option<(AiBehavior, Instant)>,
+    cached: Option<(AiBehavior, Instant, u64)>,
     last_error: Option<String>,
     backoff_until: Option<Instant>,
     last_latency_ms: Option<u64>,
@@ -261,7 +290,11 @@ impl AiDirector {
                     };
                     let latency_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
                     if reply_tx
-                        .send(AiReply { result, latency_ms })
+                        .send(AiReply {
+                            result,
+                            latency_ms,
+                            semantic_key: job.semantic_key,
+                        })
                         .is_err()
                     {
                         break;
@@ -304,6 +337,7 @@ impl AiDirector {
                             self.cached = Some((
                                 choice,
                                 Instant::now() + Duration::from_millis(self.config.choice_ttl_ms),
+                                reply.semantic_key,
                             ));
                             self.last_choice = Some(choice.name());
                             self.last_error = None;
@@ -332,7 +366,7 @@ impl AiDirector {
         if self
             .cached
             .as_ref()
-            .is_some_and(|(_, expires)| Instant::now() >= *expires)
+            .is_some_and(|(_, expires, _)| Instant::now() >= *expires)
         {
             self.cached = None;
         }
@@ -382,7 +416,16 @@ impl AiDirector {
             allowed: &names,
             previous,
         });
-        if self.sender.send(AiJob { prompt, allowed }).is_ok() {
+        let semantic_key = semantic_key(world);
+        if self
+            .sender
+            .send(AiJob {
+                prompt,
+                allowed,
+                semantic_key,
+            })
+            .is_ok()
+        {
             self.in_flight = true;
             self.last_query = Some(now);
             self.last_event_generation = world.event_generation;
@@ -393,8 +436,8 @@ impl AiDirector {
     }
 
     fn choice(&self, world: &World) -> Option<AiBehavior> {
-        let (choice, expires) = self.cached?;
-        if Instant::now() >= expires {
+        let (choice, expires, source_key) = self.cached?;
+        if Instant::now() >= expires || semantic_key(world) != source_key {
             return None;
         }
         allowed_behaviors(world).contains(&choice).then_some(choice)
@@ -624,5 +667,14 @@ mod tests {
         let mut snapshot = snapshot();
         snapshot.activity.typing = true;
         assert_eq!(allowed_behaviors(&world(snapshot)), vec![AiBehavior::Focus]);
+    }
+
+    #[test]
+    fn semantic_key_changes_with_local_context() {
+        let first = world(snapshot());
+        let mut second_snapshot = snapshot();
+        second_snapshot.context.current_line = "different line".into();
+        let second = world(second_snapshot);
+        assert_ne!(semantic_key(&first), semantic_key(&second));
     }
 }
