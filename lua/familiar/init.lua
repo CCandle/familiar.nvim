@@ -23,6 +23,7 @@ local function brain_status()
       provider = config.brain.provider,
       model = config.brain.model,
       endpoint = config.brain.endpoint,
+      base_url = config.brain.base_url,
       interval_ms = config.brain.interval_ms,
       include_buffer_text = config.brain.context.include_buffer_text,
     },
@@ -30,6 +31,25 @@ local function brain_status()
     local_model = models.status(),
     core_binary = client.binary(config),
   }
+end
+
+local function resolve_brain_update(opts)
+  local candidate = config_mod.resolve(vim.tbl_deep_extend("force", vim.deepcopy(config), {
+    brain = opts or {},
+  }))
+  return candidate.brain
+end
+
+local function apply_brain_update(opts)
+  config.brain = resolve_brain_update(opts)
+  if client.running() then client.configure(config) end
+  return brain_status()
+end
+
+local function reload_brain()
+  if not client.running() then return false, "familiar-core is not running" end
+  local ok = client.configure(config)
+  return ok, ok and "BrainProvider configuration reloaded" or "failed to send BrainProvider configuration"
 end
 
 local function notify_model_result(action, ok, message)
@@ -64,7 +84,12 @@ local function create_commands()
 
   vim.api.nvim_create_user_command("FamiliarBrainStatus", function()
     vim.notify(vim.inspect(brain_status()), vim.log.levels.INFO, { title = "familiar.nvim brain" })
-  end, { desc = "Show BrainProvider and managed-model status" })
+  end, { desc = "Show BrainProvider, reliability metrics, and managed-model status" })
+
+  vim.api.nvim_create_user_command("FamiliarBrainReload", function()
+    local ok, message = reload_brain()
+    vim.notify("familiar brain: " .. message, ok and vim.log.levels.INFO or vim.log.levels.WARN)
+  end, { desc = "Reload BrainProvider configuration and environment-sourced credentials" })
 
   vim.api.nvim_create_user_command("FamiliarBrainInstall", function()
     local bin = client.binary(config)
@@ -148,6 +173,15 @@ function M.toggle() runtime.toggle(config) end
 function M.skin(name)
   if name == nil then return config.skin end
   return set_skin(name)
+end
+
+function M.brain(opts)
+  if opts == nil then return brain_status() end
+  return apply_brain_update(opts)
+end
+
+function M.brain_reload()
+  return reload_brain()
 end
 
 function M.brain_status()
