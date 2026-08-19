@@ -20,10 +20,12 @@ M.defaults = {
     enabled = false,
     provider = "rule", -- rule | local_llama | ollama | openai_compatible
     model = nil,
-    endpoint = nil,
+    endpoint = nil, -- complete chat-completions URL
+    base_url = nil, -- standard OpenAI-compatible base URL; /chat/completions is appended
     api_key = nil,
     api_key_env = nil,
-    extra_body = {}, -- provider-specific OpenAI-compatible fields; reserved core fields cannot be replaced
+    headers = {}, -- custom string headers for gateways or non-Bearer auth
+    extra_body = {}, -- vendor-specific request fields; model/messages/stream remain reserved
     interval_ms = 20000,
     event_min_interval_ms = 5000,
     choice_ttl_ms = 30000,
@@ -37,6 +39,12 @@ M.defaults = {
       lines_after = 6,
       max_line_chars = 240,
       max_total_chars = 3200,
+      deny_filetypes = { "dotenv" },
+      deny_name_patterns = {
+        "^%.env",
+        "^id_rsa",
+        "^id_ed25519",
+      },
     },
 
     local_model = {
@@ -151,6 +159,14 @@ local function validate(resolved)
   if not providers[resolved.brain.provider] then
     error(("familiar.nvim: unknown brain provider %q"):format(tostring(resolved.brain.provider)))
   end
+  if type(resolved.brain.headers) ~= "table" then
+    error("familiar.nvim: brain.headers must be a table")
+  end
+  for key, value in pairs(resolved.brain.headers) do
+    if type(key) ~= "string" or key == "" or type(value) ~= "string" then
+      error("familiar.nvim: brain.headers must contain non-empty string keys and string values")
+    end
+  end
   if type(resolved.brain.extra_body) ~= "table" then
     error("familiar.nvim: brain.extra_body must be a table")
   end
@@ -168,6 +184,12 @@ local function validate(resolved)
   end
   if resolved.brain.context.max_total_chars < 0 then
     error("familiar.nvim: brain.context.max_total_chars must be non-negative")
+  end
+  if type(resolved.brain.context.deny_filetypes) ~= "table" then
+    error("familiar.nvim: brain.context.deny_filetypes must be a list")
+  end
+  if type(resolved.brain.context.deny_name_patterns) ~= "table" then
+    error("familiar.nvim: brain.context.deny_name_patterns must be a list")
   end
 
   return resolved
