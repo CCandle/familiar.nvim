@@ -1,261 +1,290 @@
-# Brain design
+# Brain providers
 
 ## Role
 
-The brain is a low-frequency **behavior director**. It does not animate frames, draw glyphs, choose coordinates, invoke editor commands, or replace the deterministic runtime.
+The brain is a low-frequency **behavior director**. It never renders frames, chooses screen coordinates, writes visible dialogue, invokes editor commands, or replaces deterministic safety rules.
 
-The deterministic `RuleBrain` remains mandatory. Optional AI providers add contextual judgment and variety when several already-safe actions are reasonable.
+`RuleBrain` is always present and produces an immediate intent. Optional AI providers run asynchronously and may replace that intent only with one currently allowed behavior label. If a provider is slow, malformed, unavailable, or returns a forbidden action, familiar.nvim simply continues with `RuleBrain`.
 
-Most of the familiar's liveliness comes from the world model, state machine, personality state, cooldowns, motion utility, action continuity, and presentation engine. The language model is not the personality itself.
+The current AI output vocabulary is deliberately tiny:
 
-## Provider model
+```text
+idle
+focus
+inspect
+curious
+sleep
+```
 
-AI is off by default. The long-term user-facing abstraction is a provider rather than one required local model:
+`hide` remains deterministic safety behavior. Target, locomotion, mood, emote, duration, placement, animation, and glyphs remain engine-owned.
+
+## Provider contract
+
+AI is disabled by default.
 
 ```text
 BrainProvider
-  |- rule               always available
-  |- local_llama        embedded llama.cpp + downloaded GGUF
-  |- ollama             optional local HTTP service
-  |- openai_compatible  remote/local OpenAI-compatible endpoint
-  `- custom             user-supplied adapter
+  |- rule               always available, no inference
+  |- local_llama        embedded llama.cpp + managed/custom GGUF
+  |- ollama             local OpenAI-compatible Ollama endpoint
+  `- openai_compatible  hosted or self-hosted OpenAI-compatible endpoint
 ```
 
-Examples of services behind `openai_compatible` can include hosted or self-hosted models. The familiar core must not special-case one vendor's behavior policy.
+All inference happens inside `familiar-core`, not in Neovim's Lua event loop. The core owns a single background brain worker. Animation and editor interaction never wait for inference.
 
-A future configuration shape may look like:
+## Decision cadence
+
+Default AI policy:
+
+- ordinary AI decision eligibility: at most once every **20 seconds**;
+- meaningful events (`buffer_enter`, save, diagnostic change): may trigger after a **5 second** minimum interval;
+- no routine inference while the user is actively typing;
+- only one request may be in flight;
+- successful AI choices have a **30 second TTL**;
+- a cached choice is revalidated against the current deterministic allowed-action set before use;
+- provider timeout defaults to **8 seconds** and does not block Neovim.
+
+The model is therefore not the character's animation loop or personality engine. Most liveliness comes from mode policy, state transitions, cooldowns, motion utility/stickiness, micro-actions, and the Presentation Engine.
+
+## Editor context and privacy
+
+When AI is enabled, familiar.nvim may include a bounded text window around the cursor:
+
+```text
+6 lines before
+current line
+6 lines after
+```
+
+Defaults:
 
 ```lua
-brain = {
-  enabled = false,
-  provider = "rule",
+context = {
+  include_buffer_text = true,
+  lines_before = 6,
+  lines_after = 6,
+  max_line_chars = 240,
+  max_total_chars = 3200,
 }
 ```
 
-or:
+The current line is budgeted first, then the nearest surrounding lines. The entire source file is never sent by this mechanism.
 
-```lua
-brain = {
-  enabled = true,
-  provider = "ollama",
-  model = "...",
-}
-```
-
-or:
+When AI is disabled, text context is not collected into brain snapshots. For a remote provider, users who do not want source text to leave the machine can use:
 
 ```lua
 brain = {
   enabled = true,
   provider = "openai_compatible",
-  endpoint = "...",
-  model = "...",
-  api_key = function()
-    return os.getenv("FAMILIAR_API_KEY")
-  end,
+  -- ...
+  context = {
+    include_buffer_text = false,
+  },
 }
 ```
 
-The exact public schema is deferred until at least two providers share a working contract.
+That leaves mode, filetype, modified state, diagnostics, idle state, and other bounded metadata available to the policy.
 
-## Local llama.cpp backend
+## Rule-only default
 
-The intended fully local backend is linked into `familiar-core` rather than requiring Ollama or a permanent daemon:
+No AI provider is required:
 
-```text
-Neovim starts familiar-core
-  -> deterministic systems are immediately available
-  -> local model is lazily initialized only if enabled
-  -> llama.cpp runs inside the sidecar process
-
-Neovim exits
-  -> familiar-core exits
-  -> model memory is released
+```lua
+require("familiar").setup({
+  brain = {
+    enabled = false,
+    provider = "rule",
+  },
+})
 ```
 
-The plugin itself does not bundle model weights in its Git checkout.
+This is the default and requires no network or model download.
 
-When a user opts into the local backend, a pinned model can be downloaded into a persistent data directory such as:
+## Embedded local llama.cpp
 
-```text
-stdpath("data")/familiar/models/<model-id>/<revision>/model.gguf
+The fully local path links llama.cpp into `familiar-core` behind the Cargo feature `local-llama`.
+
+Build it with:
+
+```bash
+cargo build --release -p familiar-core --features local-llama
 ```
 
-Temporary partial downloads belong under `stdpath("cache")/familiar/`.
+On macOS the binding uses the Metal backend. The model lives in the familiar data directory, not the lazy.nvim checkout.
 
-A model manifest should pin at least:
-
-```text
-model id
-repository/provider
-revision
-filename
-expected bytes
-SHA-256
-license
-prompt/template family
-```
-
-Download flow should be explicit and atomic:
+The managed reference model is:
 
 ```text
-user enables local AI
-  -> show model name / size / license
-  -> user confirms download
-  -> download to .part
-  -> verify checksum
-  -> atomic rename
-  -> model becomes available
+SmolLM2-135M-Instruct
+Q4_K_M GGUF
+~105 MB
+Apache-2.0
+SHA-256: bda484992f9655d22504b14e57985257fa6a86937c61f957cf99c10a3bcae169
 ```
 
-If the model is absent, damaged, unsupported, or fails inference, the session continues on `RuleBrain`.
+It is intentionally a **minimal policy experiment**, not a claim that a 135M model understands code like a hosted frontier model.
 
-## Model size
+Install explicitly from Neovim:
 
-No parameter count is a product requirement.
+```vim
+:FamiliarBrainInstall
+:FamiliarBrainStatus
+```
 
-A 100M-class instruct model is currently an acceptable upper-bound experiment for a tiny local policy, but the task should be benchmarked downward as aggressively as possible. The brain only needs to interpret a compact editor snapshot and choose among a small action set; it is not a general chat assistant.
+The download is written to `.part`, checked for plausible size, GGUF magic, and the pinned SHA-256, then atomically renamed into:
 
-A smaller specialized classifier/policy model may ultimately beat a general LLM on latency, memory, and predictability. The provider abstraction deliberately keeps that option open.
+```text
+stdpath("data")/familiar/models/SmolLM2-135M-Instruct-Q4_K_M.gguf
+```
 
-The smallest backend that passes familiar-specific behavior tests wins.
+Remove it with:
 
-## Input
+```vim
+:FamiliarBrainRemove
+```
 
-Providers receive a compact normalized semantic snapshot, not a dump of raw Neovim events or an entire source file.
+Enable it:
 
-Conceptually:
-
-```json
-{
-  "session": {
-    "minutes": 43,
-    "idle_ms": 3200
+```lua
+require("familiar").setup({
+  brain = {
+    enabled = true,
+    provider = "local_llama",
   },
-  "activity": {
-    "mode": "normal",
-    "typing": "quiet",
-    "buffer_switch_rate": "low",
-    "diagnostic_trend": -2
+})
+```
+
+A custom GGUF can be used without the managed model:
+
+```lua
+brain = {
+  enabled = true,
+  provider = "local_llama",
+  local_model = {
+    model_path = "~/models/my-model.gguf",
+    n_ctx = 2048,
+    n_threads = 4,
+    n_gpu_layers = 99,
   },
-  "document": {
-    "filetype": "tex",
-    "local_context": "equation",
-    "semantic_hint": "Control Architecture"
-  },
-  "familiar": {
-    "energy": 0.42,
-    "curiosity": 0.71,
-    "stress": 0.18,
-    "recent_actions": ["idle", "glance"]
-  },
-  "available_actions": ["idle", "focus", "inspect", "peek", "wander"]
 }
 ```
 
-Source context must be aggressively bounded and only collected when it can materially change a low-frequency decision. The provider should not see every keypress or every animation frame.
+## Ollama
 
-## Output
+Ollama exposes an OpenAI-compatible chat endpoint locally. familiar.nvim defaults the Ollama endpoint to:
 
-Output is strictly constrained to declared semantic IDs and small scalar values, for example:
+```text
+http://127.0.0.1:11434/v1/chat/completions
+```
 
-```json
-{
-  "behavior": "inspect",
-  "target": "current_context",
-  "mood": "curious",
-  "emote": "question"
+Only the model name is required:
+
+```lua
+require("familiar").setup({
+  brain = {
+    enabled = true,
+    provider = "ollama",
+    model = "qwen3:0.6b",
+  },
+})
+```
+
+Any Ollama model that can follow the one-word behavior contract can be tested. The project does not force one Ollama model.
+
+## DeepSeek / OpenAI-compatible APIs
+
+Use the full chat-completions endpoint, model name, and preferably an environment variable for the API key.
+
+For current DeepSeek V4 Flash:
+
+```lua
+require("familiar").setup({
+  brain = {
+    enabled = true,
+    provider = "openai_compatible",
+    endpoint = "https://api.deepseek.com/chat/completions",
+    model = "deepseek-v4-flash",
+    api_key_env = "DEEPSEEK_API_KEY",
+
+    -- DeepSeek V4 currently enables thinking by default. The familiar policy
+    -- needs a tiny final label, so disable thinking rather than spending
+    -- reasoning tokens on a five-way behavior choice.
+    extra_body = {
+      thinking = { type = "disabled" },
+    },
+  },
+})
+```
+
+`extra_body` is passed to OpenAI-compatible request bodies for vendor-specific options. The engine reserves `model`, `messages`, and `stream`; those cannot be replaced through `extra_body`.
+
+A generic provider looks the same:
+
+```lua
+brain = {
+  enabled = true,
+  provider = "openai_compatible",
+  endpoint = "https://example.com/v1/chat/completions",
+  model = "my-model",
+  api_key_env = "FAMILIAR_API_KEY",
 }
 ```
 
-The model cannot emit:
+Direct `api_key = "..."` is supported, but `api_key_env` is preferred so credentials do not live in the Neovim configuration file.
 
-- visible free-form dialogue by default;
-- arbitrary Unicode or skin data;
-- raw screen coordinates;
-- colors or animation frames;
-- shell or editor commands;
-- executable code;
-- arbitrary file paths.
+## Provider request/output
 
-For llama.cpp, grammar/JSON-schema constrained decoding should be used when the chosen model/backend supports it. Remote providers are still validated against the same runtime schema.
+The prompt contains only:
 
-## RuleBrain and safety envelope
+- the currently allowed behavior labels;
+- mode and filetype;
+- modified/diagnostic/activity metadata;
+- previous behavior;
+- the bounded nearby text context when enabled.
 
-AI never receives an unconstrained action space.
+The provider is asked to return exactly one behavior word. Parsing remains defensive: only a token that exactly matches an allowed behavior is accepted. A JSON-ish response containing an allowed label is tolerated, but free-form text does not expand the action space.
 
-The deterministic layer decides which actions are currently eligible based on safety, nuisance limits, cooldowns, editor mode, visibility, and presentation state. A provider chooses only inside that set.
-
-Example:
+Remote/OpenAI-compatible requests use these defaults:
 
 ```text
-allowed: idle, glance, peek, inspect
-blocked: celebrate, sleep, relocate-over-selection
+temperature = 0.15
+max_tokens = 8
+timeout = 8000ms
+stream = false
 ```
 
-The provider may choose `peek`; it cannot override the blocked set.
+The AI cannot emit coordinates, commands, arbitrary glyphs, skin definitions, shell operations, or user-visible prose.
 
-This architecture makes weak or quirky tiny models useful without letting their mistakes become editor interference.
+## Safety envelope
 
-## Decision frequency
+The deterministic layer reduces the available action set before inference. Examples:
 
-A model call is never tied to animation FPS.
+- active Insert/Replace typing collapses the set to `focus`;
+- errors allow `inspect`, `focus`, or `curious`;
+- long idle allows `sleep` or `idle`;
+- command/visual states strongly restrict novelty;
+- unsafe/small presentation space deterministically hides the familiar.
 
-Initial policy:
+A model cannot override these restrictions.
 
-- meaningful semantic transitions may make a decision eligible;
-- otherwise decisions occur at most on a slow tens-of-seconds cadence;
-- sustained typing suppresses routine inference;
-- Insert/Visual/command-line activity strongly suppresses novelty decisions;
-- hidden/background familiar state suppresses inference;
-- repeated equivalent world states reuse the current plan;
-- cooldowns prevent remote API use from becoming noisy or expensive.
+## Why SmolLM2-135M-Instruct
 
-For many sessions, most behavior should come from deterministic state-machine logic with only occasional AI calls.
+For the built-in local reference, the current practical sub-150M field is narrow.
 
-## Internal state
+`SmolLM2-135M-Instruct` is small enough to be a reasonable optional download, has an Apache-2.0 license, has readily available GGUF quantization, works with llama.cpp, and is actually instruction-tuned. It therefore makes a clean **lower-bound benchmark**.
 
-The companion can maintain bounded continuous traits such as:
+Other sub-150M candidates tend to be base language models that would need a familiar-specific fine-tune, or have less convenient distribution/licensing. A future tiny classifier or project-specific policy model may eventually replace the generic 135M LLM if PetBench shows it can preserve useful contextual behavior with lower memory and latency.
+
+## PetBench direction
+
+The provider abstraction exists so the same scenarios can compare:
 
 ```text
-energy
-curiosity
-stress
-confidence
-focus
-social
+RuleBrain
+SmolLM2-135M embedded
+Ollama local models
+DeepSeek / other hosted APIs
+future specialized policy models
 ```
 
-Editor events nudge these values and they decay over time. This provides continuity even when the AI backend is disabled or unavailable.
-
-A small persistent profile may eventually store long-lived tendencies. No vector database or RAG service is required for the core experience.
-
-## Provider security and privacy
-
-Remote providers are explicitly opt-in.
-
-API credentials must not be committed into the familiar repository or written into logs. Configuration should support environment variables or callbacks so secrets can remain in the user's existing secret-management workflow.
-
-Before sending editor context to a remote provider, the eventual implementation must document exactly what fields can leave the machine and provide conservative defaults. Local RuleBrain and local llama.cpp operation remain available without network context disclosure.
-
-## PetBench
-
-Provider choice should be based on familiar behavior rather than generic chatbot benchmarks.
-
-Scenarios should include:
-
-- sustained Insert-mode writing: stay focused and non-disruptive;
-- Visual selection: observe without relocating frivolously;
-- repeated scrolling: avoid stale action plans;
-- new diagnostics: inspecting may be useful;
-- diagnostics resolved while typing continues: avoid noisy celebration;
-- long idle: rest/sleep;
-- new Markdown/LaTeX/code structure: occasional curiosity is reasonable;
-- dense viewport: accept hide/peek instead of covering text;
-- repeated equivalent state: preserve behavioral continuity;
-- rapid mode changes: avoid animation thrashing;
-- backend timeout or malformed output: deterministic fallback is immediate.
-
-Metrics should include schema validity, contextual appropriateness, action diversity, continuity, nuisance rate, inference latency, resident memory, network cost, and energy impact.
-
-Only after this benchmark exists should the project choose a default optional local model.
+Useful metrics include contextual appropriateness, nuisance rate, action continuity, malformed-output rate, latency, resident memory, network/API cost, and how often the AI choice actually differs beneficially from RuleBrain.
