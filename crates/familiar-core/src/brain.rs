@@ -303,9 +303,11 @@ impl AiDirector {
                 let mut provider = ProviderEngine::from_config(&worker_config);
                 for job in job_rx {
                     let started = Instant::now();
+                    let allowed_names: Vec<&'static str> =
+                        job.allowed.iter().map(|choice| choice.name()).collect();
                     let result = match &mut provider {
                         Ok(provider) => provider
-                            .query(&job.prompt)
+                            .query(&job.prompt, &allowed_names)
                             .and_then(|raw| parse_choice(&raw, &job.allowed)),
                         Err(error) => Err(error.clone()),
                     };
@@ -371,9 +373,6 @@ impl AiDirector {
                     self.in_flight = false;
                     self.last_latency_ms = Some(reply.latency_ms);
 
-                    // A probe reply visible here is necessarily late/orphaned:
-                    // ordinary probes consume their own reply synchronously. Clear the
-                    // worker busy state, but preserve the earlier timeout/failure signal.
                     if reply.probe_id.is_some() {
                         continue;
                     }
@@ -549,8 +548,6 @@ impl AiDirector {
                 }
             }
             Err(RecvTimeoutError::Timeout) => {
-                // Keep `in_flight` true: the provider worker may still be executing.
-                // A future poll drains the late probe reply and only then clears busy.
                 let error = format!("brain probe timed out after {} ms", wait.as_millis());
                 self.record_failure(error.clone());
                 BrainProbeOutcome {
