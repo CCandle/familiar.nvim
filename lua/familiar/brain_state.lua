@@ -1,23 +1,25 @@
 local M = {}
 
-local state = {
-  connected = false,
-  local_llama = nil,
-  enabled = false,
-  provider = "rule",
-  state = "disconnected",
-  error = nil,
-}
-
-function M.reset()
-  state = {
+local function fresh_state()
+  return {
     connected = false,
     local_llama = nil,
     enabled = false,
     provider = "rule",
     state = "disconnected",
     error = nil,
+    last_latency_ms = nil,
+    last_choice = nil,
+    consecutive_failures = 0,
+    total_requests = 0,
+    total_successes = 0,
   }
+end
+
+local state = fresh_state()
+
+function M.reset()
+  state = fresh_state()
 end
 
 function M.handle(message)
@@ -30,6 +32,11 @@ function M.handle(message)
     state.provider = message.provider or state.provider
     state.state = message.state or state.state
     state.error = message.error
+    state.last_latency_ms = message.last_latency_ms
+    state.last_choice = message.last_choice
+    state.consecutive_failures = message.consecutive_failures or 0
+    state.total_requests = message.total_requests or 0
+    state.total_successes = message.total_successes or 0
   end
 end
 
