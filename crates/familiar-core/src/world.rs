@@ -4,6 +4,7 @@ use crate::protocol::{EditorEvent, EditorSnapshot};
 pub struct World {
     pub snapshot: Option<EditorSnapshot>,
     pub last_event: Option<EditorEvent>,
+    pub event_generation: u64,
 }
 
 impl World {
@@ -13,5 +14,6 @@ impl World {
 
     pub fn apply_event(&mut self, event: EditorEvent) {
         self.last_event = Some(event);
+        self.event_generation = self.event_generation.wrapping_add(1);
     }
 }
