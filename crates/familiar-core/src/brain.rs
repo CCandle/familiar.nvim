@@ -214,10 +214,10 @@ fn parse_choice(raw: &str, allowed: &[AiBehavior]) -> Result<AiBehavior, String>
     }
 
     if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
-        if let Some(candidate) = value.as_str() {
-            if let Some(choice) = match_choice(candidate, allowed) {
-                return Ok(choice);
-            }
+        if let Some(candidate) = value.as_str()
+            && let Some(choice) = match_choice(candidate, allowed)
+        {
+            return Ok(choice);
         }
         if let Some(candidate) = value.get("behavior").and_then(Value::as_str) {
             if let Some(choice) = match_choice(candidate, allowed) {
