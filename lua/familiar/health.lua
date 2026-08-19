@@ -1,5 +1,10 @@
 local M = {}
 
+local function success_rate(brain)
+  if not brain.total_requests or brain.total_requests == 0 then return nil end
+  return (brain.total_successes or 0) * 100 / brain.total_requests
+end
+
 function M.check()
   vim.health.start("familiar.nvim")
 
@@ -41,6 +46,7 @@ function M.check()
   elseif vim.fn.executable("cargo") == 1 then
     vim.health.warn("familiar-core is not built; Lua fallback will be used", {
       "Run: cargo build --release -p familiar-core",
+      "For embedded local AI: cargo build --release -p familiar-core --features local-llama",
     })
   else
     vim.health.info("familiar-core is unavailable and Cargo is not installed; Lua fallback remains usable")
@@ -71,6 +77,28 @@ function M.check()
       tostring(brain.state),
       tostring(brain.local_llama)
     ))
+
+    local rate = success_rate(brain)
+    if brain.total_requests and brain.total_requests > 0 then
+      vim.health.info(("brain metrics: requests=%d successes=%d success_rate=%.1f%% consecutive_failures=%d"):format(
+        brain.total_requests,
+        brain.total_successes or 0,
+        rate or 0,
+        brain.consecutive_failures or 0
+      ))
+    end
+    if brain.last_latency_ms then
+      vim.health.info(("brain last inference: choice=%s latency=%dms"):format(
+        tostring(brain.last_choice or "n/a"),
+        brain.last_latency_ms
+      ))
+    end
+
+    if config.brain.provider == "local_llama" and brain.local_llama ~= true then
+      vim.health.error("local_llama is configured, but this familiar-core binary was built without the local-llama feature", {
+        "Rebuild with: cargo build --release -p familiar-core --features local-llama",
+      })
+    end
     if brain.error then vim.health.warn("brain provider error: " .. tostring(brain.error)) end
   elseif config.brain.enabled and config.brain.provider == "local_llama" then
     vim.health.info("local_llama requires a core built with: cargo build --release -p familiar-core --features local-llama")
