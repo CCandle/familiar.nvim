@@ -59,7 +59,9 @@ local function brain_payload(config)
     provider = source.provider,
     model = source.model,
     endpoint = source.endpoint,
+    base_url = source.base_url,
     api_key = api_key,
+    headers = vim.deepcopy(source.headers or {}),
     extra_body = vim.deepcopy(source.extra_body or {}),
     interval_ms = source.interval_ms,
     event_min_interval_ms = source.event_min_interval_ms,
@@ -144,7 +146,7 @@ function M.start(config, on_message, on_exit)
 
   state.job = job
   M.send({ type = "hello", protocol = 2, client = "familiar.nvim" })
-  M.send({ type = "configure", brain = brain_payload(config) })
+  M.configure(config)
   return true
 end
 
@@ -157,6 +159,12 @@ function M.send(message)
   end
   local sent = vim.fn.chansend(state.job, encoded .. "\n")
   return sent > 0
+end
+
+function M.configure(config)
+  state.config = config
+  if not M.running() then return false end
+  return M.send({ type = "configure", brain = brain_payload(config) })
 end
 
 function M.stop()
