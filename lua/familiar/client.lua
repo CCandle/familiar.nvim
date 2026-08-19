@@ -65,7 +65,7 @@ local function brain_payload(config)
     timeout_ms = source.timeout_ms,
     max_tokens = source.max_tokens,
     temperature = source.temperature,
-    local = {
+    ["local"] = {
       model_path = model_path,
       n_ctx = source.local_model.n_ctx,
       n_threads = source.local_model.n_threads,
