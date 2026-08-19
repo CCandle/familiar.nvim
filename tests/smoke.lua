@@ -20,6 +20,9 @@ assert(config.brain.enabled == false)
 assert(config.brain.provider == "rule")
 assert(config.brain.interval_ms == 20000)
 assert(config.brain.context.include_buffer_text == true)
+assert(type(config.brain.headers) == "table")
+assert(config.brain.base_url == nil)
+assert(vim.tbl_contains(config.brain.context.deny_filetypes, "dotenv"))
 
 local high_refresh = config_mod.resolve({ animation = { profile = "high_refresh" } })
 assert(high_refresh.animation.fps == 120)
@@ -40,13 +43,18 @@ local remote_brain = config_mod.resolve({
   brain = {
     enabled = true,
     provider = "openai_compatible",
-    endpoint = "https://example.invalid/v1/chat/completions",
+    base_url = "https://example.invalid/v1",
     model = "test-model",
     api_key_env = "FAMILIAR_TEST_API_KEY",
+    headers = { ["x-familiar-test"] = "yes" },
+    extra_body = { thinking = { type = "disabled" } },
   },
 })
 local remote_payload = client._brain_payload(remote_brain)
 assert(remote_payload.api_key == "secret-for-smoke-only")
+assert(remote_payload.base_url == "https://example.invalid/v1")
+assert(remote_payload.headers["x-familiar-test"] == "yes")
+assert(remote_payload.extra_body.thinking.type == "disabled")
 vim.env.FAMILIAR_TEST_API_KEY = nil
 
 assert(easing.apply("linear", 0.5) == 0.5)
@@ -193,6 +201,13 @@ local context_chars = vim.fn.strchars(context.current_line)
 for _, line in ipairs(context.before) do context_chars = context_chars + vim.fn.strchars(line) end
 for _, line in ipairs(context.after) do context_chars = context_chars + vim.fn.strchars(line) end
 assert(context_chars <= 10)
+
+vim.api.nvim_buf_set_name(ctx_buf, "/tmp/.env.local")
+assert(telemetry._context_allowed(ctx_buf, ctx_config.brain.context) == false)
+local sensitive_context = telemetry._text_context(ctx_buf, 2, ctx_config)
+assert(sensitive_context.current_line == "")
+assert(#sensitive_context.before == 0)
+assert(#sensitive_context.after == 0)
 vim.api.nvim_buf_delete(ctx_buf, { force = true })
 
 familiar.setup({ enabled = false, core = { enabled = false } })
@@ -200,9 +215,14 @@ assert(familiar.status().running == false)
 assert(vim.fn.exists(":FamiliarDemo") == 2)
 assert(vim.fn.exists(":FamiliarSkin") == 2)
 assert(vim.fn.exists(":FamiliarBrainStatus") == 2)
+assert(vim.fn.exists(":FamiliarBrainReload") == 2)
+assert(vim.fn.exists(":FamiliarBrainTest") == 2)
 assert(vim.fn.exists(":FamiliarBrainInstall") == 2)
 assert(vim.fn.exists(":FamiliarBrainRemove") == 2)
 assert(familiar.skin("spirit") == "spirit")
 assert(familiar.skin() == "spirit")
 assert(familiar.brain_status().configured.enabled == false)
+local probe_result
+assert(familiar.brain_test(function(result) probe_result = result end) == false)
+assert(probe_result and probe_result.ok == false)
 print("familiar.nvim smoke: ok")
