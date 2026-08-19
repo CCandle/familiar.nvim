@@ -5,10 +5,12 @@ use std::path::{Path, PathBuf};
 
 pub const DEFAULT_MODEL_ID: &str = "smollm2-135m-instruct-q4_k_m";
 pub const DEFAULT_MODEL_URL: &str = "https://huggingface.co/lmstudio-community/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q4_K_M.gguf";
-pub const DEFAULT_MODEL_SHA256: &str = "bda484992f9655d22504b14e57985257fa6a86937c61f957cf99c10a3bcae169";
+pub const DEFAULT_MODEL_SHA256: &str =
+    "bda484992f9655d22504b14e57985257fa6a86937c61f957cf99c10a3bcae169";
 
 fn sha256(path: &Path) -> Result<String, String> {
-    let mut file = File::open(path).map_err(|error| format!("open for checksum failed: {error}"))?;
+    let mut file =
+        File::open(path).map_err(|error| format!("open for checksum failed: {error}"))?;
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
     loop {
@@ -49,7 +51,8 @@ fn validate_gguf(path: &Path) -> Result<u64, String> {
 
 pub fn install(path: &Path, url: &str) -> Result<u64, String> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| format!("create model directory failed: {error}"))?;
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("create model directory failed: {error}"))?;
     }
 
     let tmp = PathBuf::from(format!("{}.part", path.display()));
@@ -59,9 +62,12 @@ pub fn install(path: &Path, url: &str) -> Result<u64, String> {
         .call()
         .map_err(|error| format!("model download failed: {error}"))?;
     let mut reader = response.body_mut().as_reader();
-    let mut file = File::create(&tmp).map_err(|error| format!("create temp model failed: {error}"))?;
-    std::io::copy(&mut reader, &mut file).map_err(|error| format!("model download write failed: {error}"))?;
-    file.flush().map_err(|error| format!("model flush failed: {error}"))?;
+    let mut file =
+        File::create(&tmp).map_err(|error| format!("create temp model failed: {error}"))?;
+    std::io::copy(&mut reader, &mut file)
+        .map_err(|error| format!("model download write failed: {error}"))?;
+    file.flush()
+        .map_err(|error| format!("model flush failed: {error}"))?;
     drop(file);
 
     let size = match validate_gguf(&tmp) {
@@ -96,10 +102,9 @@ pub fn run_cli(args: &[String]) -> Result<bool, String> {
     }
 
     let action = args.get(1).map(String::as_str).unwrap_or("status");
-    let path = args
-        .get(2)
-        .map(PathBuf::from)
-        .ok_or_else(|| "usage: familiar-core model <install|status|remove> <path> [url]".to_string())?;
+    let path = args.get(2).map(PathBuf::from).ok_or_else(|| {
+        "usage: familiar-core model <install|status|remove> <path> [url]".to_string()
+    })?;
 
     match action {
         "install" => {
@@ -110,7 +115,8 @@ pub fn run_cli(args: &[String]) -> Result<bool, String> {
                 DEFAULT_MODEL_ID,
                 size,
                 DEFAULT_MODEL_SHA256,
-                serde_json::to_string(&path.display().to_string()).unwrap_or_else(|_| "\"\"".into())
+                serde_json::to_string(&path.display().to_string())
+                    .unwrap_or_else(|_| "\"\"".into())
             );
         }
         "status" => {
@@ -121,7 +127,8 @@ pub fn run_cli(args: &[String]) -> Result<bool, String> {
                 size.is_some(),
                 size.unwrap_or(0),
                 DEFAULT_MODEL_SHA256,
-                serde_json::to_string(&path.display().to_string()).unwrap_or_else(|_| "\"\"".into())
+                serde_json::to_string(&path.display().to_string())
+                    .unwrap_or_else(|_| "\"\"".into())
             );
         }
         "remove" => {
@@ -129,7 +136,8 @@ pub fn run_cli(args: &[String]) -> Result<bool, String> {
             println!(
                 "{{\"ok\":true,\"action\":\"remove\",\"model\":\"{}\",\"path\":{}}}",
                 DEFAULT_MODEL_ID,
-                serde_json::to_string(&path.display().to_string()).unwrap_or_else(|_| "\"\"".into())
+                serde_json::to_string(&path.display().to_string())
+                    .unwrap_or_else(|_| "\"\"".into())
             );
         }
         _ => return Err(format!("unknown model action: {action}")),
