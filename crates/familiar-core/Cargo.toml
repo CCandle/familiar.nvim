@@ -17,7 +17,7 @@ sha2 = "0.10"
 ureq = { version = "3", features = ["json"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-llama-cpp-4 = { version = "0.4.3", optional = true, default-features = false, features = ["prebuilt", "metal"] }
+llama-cpp-4 = { version = "=0.4.4", optional = true, default-features = false, features = ["prebuilt", "metal"] }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
-llama-cpp-4 = { version = "0.4.3", optional = true, default-features = false, features = ["prebuilt", "native"] }
+llama-cpp-4 = { version = "=0.4.4", optional = true, default-features = false, features = ["prebuilt", "native"] }
