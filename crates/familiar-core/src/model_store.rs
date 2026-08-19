@@ -4,11 +4,8 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 pub const DEFAULT_MODEL_ID: &str = "smollm2-135m-instruct-q4_k_m";
-pub const DEFAULT_MODEL_FILE: &str = "SmolLM2-135M-Instruct-Q4_K_M.gguf";
 pub const DEFAULT_MODEL_URL: &str = "https://huggingface.co/lmstudio-community/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q4_K_M.gguf";
 pub const DEFAULT_MODEL_SHA256: &str = "bda484992f9655d22504b14e57985257fa6a86937c61f957cf99c10a3bcae169";
-pub const DEFAULT_MODEL_LICENSE: &str = "Apache-2.0";
-pub const DEFAULT_MODEL_APPROX_BYTES: u64 = 105_000_000;
 
 fn sha256(path: &Path) -> Result<String, String> {
     let mut file = File::open(path).map_err(|error| format!("open for checksum failed: {error}"))?;
@@ -29,7 +26,7 @@ fn sha256(path: &Path) -> Result<String, String> {
 fn validate_gguf(path: &Path) -> Result<u64, String> {
     let metadata = fs::metadata(path).map_err(|error| format!("stat failed: {error}"))?;
     let size = metadata.len();
-    if size < 80_000_000 || size > 140_000_000 {
+    if !(80_000_000..=140_000_000).contains(&size) {
         return Err(format!("unexpected model size: {size} bytes"));
     }
 
@@ -150,7 +147,5 @@ mod tests {
         assert_eq!(DEFAULT_MODEL_ID, "smollm2-135m-instruct-q4_k_m");
         assert!(DEFAULT_MODEL_URL.contains("SmolLM2-135M-Instruct-Q4_K_M.gguf"));
         assert_eq!(DEFAULT_MODEL_SHA256.len(), 64);
-        assert_eq!(DEFAULT_MODEL_LICENSE, "Apache-2.0");
-        assert!(DEFAULT_MODEL_APPROX_BYTES < 120_000_000);
     }
 }
