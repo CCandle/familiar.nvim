@@ -386,9 +386,11 @@ mod tests {
 
     #[test]
     fn base_url_appends_chat_completions() {
-        let mut config = BrainConfig::default();
-        config.provider = "openai_compatible".into();
-        config.base_url = Some("https://example.test/v1/".into());
+        let config = BrainConfig {
+            provider: "openai_compatible".into(),
+            base_url: Some("https://example.test/v1/".into()),
+            ..BrainConfig::default()
+        };
         assert_eq!(
             chat_completions_endpoint(&config).unwrap(),
             "https://example.test/v1/chat/completions"
