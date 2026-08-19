@@ -1,3 +1,4 @@
+local brain_state = require("familiar.brain_state")
 local models = require("familiar.models")
 
 local M = {}
@@ -81,6 +82,7 @@ local function handle_line(line)
     debug_log("invalid core message: " .. tostring(message))
     return
   end
+  brain_state.handle(message)
   if state.on_message then state.on_message(message) end
 end
 
@@ -115,6 +117,7 @@ function M.start(config, on_message, on_exit)
     return false
   end
 
+  brain_state.reset()
   state.carry = ""
   state.stderr_carry = ""
   local job
@@ -126,6 +129,7 @@ function M.start(config, on_message, on_exit)
     on_exit = function(_, code, signal)
       local was_current = state.job == job
       if was_current then state.job = nil end
+      brain_state.disconnected()
       if state.on_exit then
         vim.schedule(function() state.on_exit(code, signal) end)
       end
@@ -158,6 +162,7 @@ function M.stop()
   local job = state.job
   if not job or job <= 0 then return end
   M.send({ type = "shutdown" })
+  brain_state.disconnected()
   vim.defer_fn(function()
     if state.job == job then
       pcall(vim.fn.jobstop, job)
