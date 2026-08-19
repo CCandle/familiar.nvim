@@ -164,6 +164,7 @@ end
 function M.configure(config)
   state.config = config
   if not M.running() then return false end
+  brain_state.reconfiguring(config.brain.provider, config.brain.enabled)
   return M.send({ type = "configure", brain = brain_payload(config) })
 end
 
