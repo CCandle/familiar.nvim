@@ -1,5 +1,5 @@
 use crate::protocol::{BrainConfig, EditorSnapshot};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use std::time::Duration;
 
 const SYSTEM_PROMPT: &str = "You are the low-frequency behavior director for a tiny nonverbal Neovim familiar. Choose one behavior only. Never speak to the user. Prefer continuity and calm over novelty.";
@@ -89,6 +89,7 @@ pub struct OpenAiCompatibleProvider {
     api_key: Option<String>,
     temperature: f32,
     max_tokens: u32,
+    extra_body: Map<String, Value>,
 }
 
 impl OpenAiCompatibleProvider {
@@ -116,11 +117,12 @@ impl OpenAiCompatibleProvider {
             api_key: config.api_key.clone().filter(|key| !key.is_empty()),
             temperature: config.temperature,
             max_tokens: config.max_tokens,
+            extra_body: config.extra_body.clone(),
         })
     }
 
     pub fn query(&mut self, prompt: &str) -> Result<String, String> {
-        let body = json!({
+        let mut body = json!({
             "model": self.model,
             "messages": [
                 { "role": "system", "content": SYSTEM_PROMPT },
@@ -130,6 +132,16 @@ impl OpenAiCompatibleProvider {
             "max_tokens": self.max_tokens,
             "stream": false
         });
+
+        let object = body
+            .as_object_mut()
+            .ok_or_else(|| "internal provider body was not an object".to_string())?;
+        for (key, value) in &self.extra_body {
+            if matches!(key.as_str(), "model" | "messages" | "stream") {
+                continue;
+            }
+            object.insert(key.clone(), value.clone());
+        }
 
         let mut request = self.agent.post(&self.endpoint);
         if let Some(key) = &self.api_key {
