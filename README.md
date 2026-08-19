@@ -4,9 +4,9 @@ A tiny terminal-native familiar that lives inside Neovim.
 
 `familiar.nvim` is an experimental editor companion: a small animated character that watches editor context, moves through available screen space, and reacts without chat, popups, or free-form generated text.
 
-The default familiar is **Mote**, a deliberately abstract 1–3 line glyph actor. It is not bound to a species. Its identity comes from a compact face grammar, optional ears/headwear, gestures, posture, timing, and a small effect vocabulary. A second glyph skin, **Spirit**, deliberately removes the ear silhouette to prove that runtime behavior is skin-independent. The earlier 16×16 pixel fox remains available as an alternate skin.
+The default familiar is **Mote**, a deliberately abstract 1–3 line glyph actor. A second glyph skin, **Spirit**, proves that runtime behavior is skin-independent. The earlier 16×16 pixel fox remains available as an alternate skin.
 
-> **Status:** early development. The repository is a working vertical slice for glyph/pixel rendering, time-domain animation, lifecycle, basic telemetry, deterministic behavior, and the Rust sidecar protocol. Optional AI providers are designed but not implemented yet.
+> **Status:** early development. The repository is a working vertical slice for glyph/pixel rendering, time-domain animation, lifecycle, bounded editor telemetry, deterministic behavior, a lifecycle-bound Rust sidecar, and optional low-frequency AI BrainProviders.
 
 ## What it is
 
@@ -16,18 +16,18 @@ The current vertical slice provides:
 
 - a default **1–3 terminal-row glyph familiar** rather than a fixed animal sprite;
 - 60 FPS active motion by default, with optional 120 FPS high-refresh and 30 FPS economy profiles;
-- fixed-duration relocation rather than movement time that grows with terminal-cell distance;
-- cubic easing, in-flight retargeting, position stickiness, and automatic sparse motion trails;
+- fixed-duration relocation, cubic easing, in-flight retargeting, position stickiness, and sparse motion trails;
 - separate rendering channels for actor content, actor position, and effects;
 - mode-aware behavior for Normal, Insert, Visual/Select, operator-pending, Replace, command-line, and related modes;
 - low-frequency micro-expression such as blink, glance, silhouette twitch/shimmer, stretch, save acknowledgment, and diagnostic-resolution celebration;
 - conservative safe placement that hides or relocates the familiar when its current region is no longer usable;
-- a lifecycle-bound Rust sidecar with a Lua fallback;
-- skin validation for glyph roles, row bounds, timed animation steps, pixel palettes, and animation graphs;
-- explicit demo and live skin-switching commands for real-terminal visual inspection;
+- a lifecycle-bound Rust sidecar with a Lua deterministic fallback;
+- optional `local_llama`, Ollama, and OpenAI-compatible BrainProviders;
+- strict model output validation, deterministic action allow-lists, stale-result rejection, provider failure backoff, and provider metrics;
+- explicit demo, skin switching, BrainProvider status/reload/test, and managed-model commands;
 - the original half-block pixel renderer and fox skin as a compatibility/experimentation path.
 
-The familiar does not need an AI model to feel alive. The eventual AI layer is an optional **low-frequency behavior director**, not a renderer, animation controller, or required dependency.
+The familiar does **not** need an AI model to feel alive. AI is off by default and acts only as an optional **low-frequency behavior director**. It never renders frames, chooses screen coordinates, invokes editor commands, or emits visible dialogue.
 
 ## Visual language
 
@@ -45,7 +45,7 @@ It can collapse to one line for motion or compact states:
   ≡(•̀ω•́)
 ```
 
-and expand to three lines only when posture benefits from it:
+and expand to three lines when posture benefits from it:
 
 ```text
    /\_/\
@@ -66,17 +66,13 @@ The design rule is:
 
 Mote and Spirit use semantic palette roles such as outline, face, effect, success, alert, and muted. Braille-like dots and symbols are reserved for motion residue or small effects rather than used to rasterize the body.
 
-Future skins may add hair/headwear, use robot/blob grammars, or define entirely different silhouettes while keeping the same semantic behavior vocabulary.
-
 ## Animation model
 
 The presentation engine is **time-domain**, not step-domain.
 
 An ordinary relocation has a wall-clock duration (250 ms by default). Distance changes whether the familiar looks like it is walking, running, dashing, or phasing, but does not make a 20-row relocation take seconds.
 
-When the editor target changes during motion, the old destination is replaced rather than queued. The current motion burst keeps its deadline whenever possible, so repeated scrolling converges on the newest safe position instead of replaying stale travel.
-
-The actor's glyph content is not rebuilt simply because its position changed. High-frequency movement normally updates only a reusable floating-window position; unchanged quantized terminal cells are skipped entirely.
+When the editor target changes during motion, the old destination is replaced rather than queued. The current burst keeps its deadline whenever possible, so repeated scrolling converges on the newest safe position instead of replaying stale travel.
 
 The default trail is `auto`: only sufficiently large run/dash motion emits sparse residues such as:
 
@@ -84,13 +80,9 @@ The default trail is `auto`: only sufficiently large run/dash motion emits spars
 ≡  ->  ⠂  ->  ⠄  ->  ·
 ```
 
-The whole actor is never smeared into multiple copies.
-
-See [`docs/ANIMATION_ENGINE.md`](docs/ANIMATION_ENGINE.md) for the full design.
+See [`docs/ANIMATION_ENGINE.md`](docs/ANIMATION_ENGINE.md) for details.
 
 ## Mode-aware interaction
-
-Mode changes affect the familiar's **behavior budget**, not merely its facial expression.
 
 | Mode | Default intent |
 | --- | --- |
@@ -109,10 +101,10 @@ Safety always wins. A frozen/sticky familiar can still move or hide when its cur
 ```text
 Neovim
   |
-  | editor telemetry / lifecycle
+  | bounded editor telemetry / lifecycle
   v
 Lua frontend
-  |  - semantic mode/activity integration
+  |  - mode/activity integration
   |  - presentation planner
   |  - time-domain motion + expression scheduling
   |  - glyph + pixel render paths
@@ -121,11 +113,13 @@ Lua frontend
   | JSONL over stdio
   v
 Rust familiar-core (child process)
-     - protocol
-     - world state
-     - RuleBrain
-     - future optional BrainProvider implementations
-     - memory/personality state (planned)
+     - protocol + world state
+     - mandatory RuleBrain
+     - optional asynchronous BrainProvider worker
+       |- embedded llama.cpp / GGUF
+       |- Ollama
+       `- OpenAI-compatible APIs
+     - strict action validation / backoff / metrics
 ```
 
 The Rust process is **not a daemon**. Neovim starts it on demand and terminates it on exit. If the sidecar is missing or fails, the Lua renderer remains usable with deterministic behavior.
@@ -134,13 +128,9 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/ANIMATION_ENGINE.md`]
 
 ## Rendering and skins
 
-Two render kinds currently exist.
-
 ### Glyph skins
 
 `mote` and `spirit` store each frame as 1–3 rows of styled text segments. A segment carries text plus a semantic color role such as `outline`, `face`, or `effect`.
-
-Rows may have different visible content but are validated against a small maximum terminal footprint. The renderer pads frames into a stable transparent surface, so one-line run/appear states and three-line rest states share a consistent anchor without requiring a raster sprite.
 
 Animations can use explicit millisecond keyframes:
 
@@ -157,7 +147,7 @@ Special Unicode is decorative, not structural: a missing fancy glyph should neve
 
 ### Pixel skins
 
-The older `fox` skin uses indexed logical pixels packed with Unicode half blocks (`▀`, `▄`, `█`). It remains supported for comparison and future experimentation:
+The older `fox` skin uses indexed logical pixels packed with Unicode half blocks (`▀`, `▄`, `█`):
 
 ```lua
 require("familiar").setup({
@@ -167,7 +157,7 @@ require("familiar").setup({
 
 `avatar = "fox"` remains a compatibility alias for the earlier configuration name.
 
-## Current requirements
+## Requirements
 
 The initial development target is intentionally narrow:
 
@@ -175,11 +165,11 @@ The initial development target is intentionally narrow:
 - `lazy.nvim`
 - a true-color terminal; iTerm2 is the primary development terminal
 - macOS is the primary development OS
-- Rust is optional for the Lua fallback, but required to build `familiar-core`
-
-Broader package-manager and platform support comes later if the plugin proves worth maintaining.
+- Rust is optional for the Lua fallback, but required for `familiar-core` and all AI providers
 
 ## Install with lazy.nvim
+
+Deterministic core + remote/Ollama providers:
 
 ```lua
 {
@@ -190,7 +180,18 @@ Broader package-manager and platform support comes later if the plugin proves wo
 }
 ```
 
-If Rust is unavailable, omit `build`. The plugin uses the Lua fallback rather than requiring Ollama or another permanent service.
+For the fully embedded local GGUF provider, build with llama.cpp support:
+
+```lua
+{
+  "CCandle/familiar.nvim",
+  event = "VeryLazy",
+  build = "cargo build --release -p familiar-core --features local-llama",
+  opts = {},
+}
+```
+
+If Rust is unavailable, omit `build`; the plugin falls back to deterministic Lua behavior, but AI providers are unavailable.
 
 For local development:
 
@@ -198,7 +199,7 @@ For local development:
 {
   dir = "~/Coding/familiar.nvim",
   event = "VeryLazy",
-  build = "cargo build --release -p familiar-core",
+  build = "cargo build --release -p familiar-core --features local-llama",
   opts = {
     debug = true,
   },
@@ -213,40 +214,28 @@ For local development:
 - `:FamiliarStatus`
 - `:FamiliarSkin [name]`
 - `:FamiliarDemo <animation> [duration_ms]`
+- `:FamiliarBrainStatus`
+- `:FamiliarBrainReload`
+- `:FamiliarBrainTest`
+- `:FamiliarBrainInstall`
+- `:FamiliarBrainRemove`
 - `:checkhealth familiar`
 
-Examples:
-
-```vim
-:FamiliarSkin mote
-:FamiliarSkin spirit
-:FamiliarDemo inspect 5000
-:FamiliarDemo sleep 5000
-:FamiliarDemo wave 4000
-:FamiliarDemo cheer 4000
-:FamiliarDemo magic 4000
-:FamiliarDemo peek 4000
-```
+`FamiliarBrainTest` runs one real inference through the configured provider and reports the selected behavior and latency. The probe does **not** alter the familiar's behavior cache or trigger an animation.
 
 No default keymaps are installed.
 
-## Configuration
-
-Most users should start with an animation profile:
+## Basic configuration
 
 ```lua
 require("familiar").setup({
   enabled = true,
-  debug = false,
   skin = "mote",
-
   animation = {
     profile = "balanced", -- balanced | high_refresh | economy
   },
 })
 ```
-
-Built-in profiles:
 
 | Profile | Active motion FPS | Ordinary relocation | Easing |
 | --- | ---: | ---: | --- |
@@ -254,87 +243,94 @@ Built-in profiles:
 | `high_refresh` | 120 | 250 ms | cubic |
 | `economy` | 30 | 280 ms | cubic |
 
-Advanced overrides are available without requiring a custom profile:
+## Optional AI providers
+
+AI remains off by default. The deterministic engine always retains final control over safety, placement, mode handling, animation, and the allowed action set.
+
+### Embedded local model
+
+Build with `--features local-llama`, then explicitly download the managed reference model:
+
+```vim
+:FamiliarBrainInstall
+```
+
+The current reference is **SmolLM2-135M-Instruct Q4_K_M**, about 105 MB, Apache-2.0. The download is SHA-256 verified before installation.
 
 ```lua
 require("familiar").setup({
-  skin = "mote",
-
-  animation = {
-    profile = "balanced",
-    fps = 60,
-    duration_ms = 250,
-    easing = "cubic", -- linear | quad | cubic | quart (out aliases also accepted)
-
-    motion = {
-      run_distance = 10,
-      dash_distance = 26,
-      dash_duration_ms = 190,
-      retarget_min_remaining_ms = 70,
-      retarget_max_extend_ms = 80,
-    },
-
-    trail = {
-      mode = "auto", -- none | auto | always
-      min_distance = 7,
-      sample_ms = 38,
-      lifetime_ms = 180,
-      max_samples = 4,
-    },
-
-    stickiness = {
-      enabled = true,
-      utility_threshold = 0.18,
-      distance_cost = 0.45,
-      distance_scale = 24,
-      recent_move_window_ms = 700,
-      recent_move_cost = 0.35,
-      moving_cost = 0.15,
-    },
-  },
-
-  render = {
-    margin = 1,
-    min_width = 36,
-    min_height = 8,
-    warp_distance = 40,
-    recompute_throttle_ms = 80,
-  },
-
-  telemetry = {
-    snapshot_ms = 1200,
-    max_visible_lines = 120,
+  brain = {
+    enabled = true,
+    provider = "local_llama",
   },
 })
 ```
 
-The detailed values are advanced tuning knobs. The intended normal UX is to choose a profile, skin, and trail preference rather than hand-tune physics.
+Then verify the real inference path:
 
-## Optional AI direction
-
-AI is deliberately not a current runtime dependency and will remain off by default.
-
-The planned abstraction is provider-based rather than tied to one model:
-
-```text
-rule
-local_llama        (embedded llama.cpp + opt-in GGUF download)
-ollama
-openai_compatible  (can point at hosted or local APIs)
-custom
+```vim
+:FamiliarBrainTest
+:FamiliarBrainStatus
 ```
 
-Local model weights would be downloaded only after explicit opt-in and stored under Neovim's data directory rather than inside the plugin checkout. Remote providers would be low-frequency semantic advisors; animation, safety, mode handling, cooldowns, and placement remain deterministic.
+### Ollama
 
-See [`docs/BRAIN.md`](docs/BRAIN.md).
+```lua
+require("familiar").setup({
+  brain = {
+    enabled = true,
+    provider = "ollama",
+    model = "qwen3:0.6b",
+  },
+})
+```
+
+Ollama defaults to `http://127.0.0.1:11434/v1/chat/completions`.
+
+### OpenAI-compatible / DeepSeek
+
+```lua
+require("familiar").setup({
+  brain = {
+    enabled = true,
+    provider = "openai_compatible",
+    base_url = "https://api.deepseek.com",
+    model = "deepseek-v4-flash",
+    api_key_env = "DEEPSEEK_API_KEY",
+    extra_body = {
+      thinking = { type = "disabled" },
+    },
+  },
+})
+```
+
+You may provide a complete `endpoint` instead of `base_url`, add string `headers` for gateways/non-Bearer authentication, and pass vendor-specific fields through `extra_body`.
+
+Provider calls are low-frequency and asynchronous. Successful decisions are bound to the semantic editor context the model actually saw; stale results are rejected. Failures fall back immediately to RuleBrain and use exponential retry backoff.
+
+Nearby source context is bounded by default. Obvious sensitive names/filetypes such as `.env*`, `id_rsa*`, `id_ed25519*`, and `dotenv` are excluded client-side. Set `brain.context.include_buffer_text = false` to use metadata-only remote decisions.
+
+Live switching is supported without restarting Neovim:
+
+```lua
+require("familiar").brain({
+  enabled = true,
+  provider = "ollama",
+  model = "qwen3:0.6b",
+})
+```
+
+`:FamiliarBrainReload` re-resolves environment-based credentials and reconstructs the provider worker.
+
+See [`docs/BRAIN.md`](docs/BRAIN.md) for the full contract, privacy limits, provider knobs, and local model details.
 
 ## Development priorities
 
-1. Real-terminal tuning of motion, trail, stickiness, and mode-aware interaction on the new presentation engine.
-2. Refine Mote/Spirit micro-expression grammar and continue proving the skin contract with visually distinct actors.
-3. Improve spatial behaviors such as real edge-peek, per-selection awareness, and richer safe-placement candidates.
+1. Real-terminal tuning of motion, trail, stickiness, and mode-aware interaction.
+2. Refine Mote/Spirit micro-expression grammar and expand visually distinct skins.
+3. Improve spatial behaviors such as real edge-peek, selection awareness, and richer safe-placement candidates.
 4. Make Markdown/LaTeX/editor structure first-class, not coding-only.
-5. Build PetBench before choosing any optional local AI model/backend.
+5. Build PetBench scenarios to compare RuleBrain, the 135M local lower bound, Ollama models, and hosted APIs on behavior quality rather than chatbot benchmarks.
 
 ## Design non-goals
 
