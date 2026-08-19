@@ -29,11 +29,16 @@ fn protocol_error(out: &mut BufWriter<io::StdoutLock<'_>>, message: impl Into<St
 
 fn brain_status_key(status: &BrainStatus) -> String {
     format!(
-        "{}|{}|{}|{}",
+        "{}|{}|{}|{}|{:?}|{:?}|{}|{}|{}",
         status.enabled,
         status.provider,
         status.state,
-        status.error.as_deref().unwrap_or("")
+        status.error.as_deref().unwrap_or(""),
+        status.last_latency_ms,
+        status.last_choice,
+        status.consecutive_failures,
+        status.total_requests,
+        status.total_successes,
     )
 }
 
@@ -55,6 +60,11 @@ fn emit_brain_status(
             provider: status.provider,
             state: status.state,
             error: status.error,
+            last_latency_ms: status.last_latency_ms,
+            last_choice: status.last_choice,
+            consecutive_failures: status.consecutive_failures,
+            total_requests: status.total_requests,
+            total_successes: status.total_successes,
         },
     )
 }
