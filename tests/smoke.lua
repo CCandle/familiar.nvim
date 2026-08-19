@@ -1,10 +1,13 @@
 local familiar = require("familiar")
 local avatar_mod = require("familiar.avatar")
+local client = require("familiar.client")
 local config_mod = require("familiar.config")
 local easing = require("familiar.easing")
+local models = require("familiar.models")
 local motion = require("familiar.motion")
 local renderer = require("familiar.renderer")
 local runtime = require("familiar.runtime")
+local telemetry = require("familiar.telemetry")
 
 local config = config_mod.resolve({})
 assert(config.skin == "mote")
@@ -13,6 +16,10 @@ assert(config.animation.duration_ms == 250)
 assert(config.animation.easing == "cubic")
 assert(config.animation.trail.mode == "auto")
 assert(config.animation.stickiness.enabled == true)
+assert(config.brain.enabled == false)
+assert(config.brain.provider == "rule")
+assert(config.brain.interval_ms == 20000)
+assert(config.brain.context.include_buffer_text == true)
 
 local high_refresh = config_mod.resolve({ animation = { profile = "high_refresh" } })
 assert(high_refresh.animation.fps == 120)
@@ -20,6 +27,27 @@ assert(high_refresh.animation.duration_ms == 250)
 local economy = config_mod.resolve({ animation = { profile = "economy" } })
 assert(economy.animation.fps == 30)
 assert(config_mod.resolve({ avatar = "fox" }).skin == "fox")
+
+local local_brain = config_mod.resolve({ brain = { enabled = true, provider = "local_llama" } })
+local local_payload = client._brain_payload(local_brain)
+assert(local_payload.enabled == true)
+assert(local_payload.provider == "local_llama")
+assert(local_payload["local"].model_path == models.path())
+assert(local_payload["local"].n_ctx == 2048)
+
+vim.env.FAMILIAR_TEST_API_KEY = "secret-for-smoke-only"
+local remote_brain = config_mod.resolve({
+  brain = {
+    enabled = true,
+    provider = "openai_compatible",
+    endpoint = "https://example.invalid/v1/chat/completions",
+    model = "test-model",
+    api_key_env = "FAMILIAR_TEST_API_KEY",
+  },
+})
+local remote_payload = client._brain_payload(remote_brain)
+assert(remote_payload.api_key == "secret-for-smoke-only")
+vim.env.FAMILIAR_TEST_API_KEY = nil
 
 assert(easing.apply("linear", 0.5) == 0.5)
 assert(easing.apply("cubic", 0.5) > easing.apply("quad", 0.5))
@@ -141,10 +169,40 @@ assert(runtime._mode_family("no") == "operator")
 assert(runtime._mode_family("R") == "replace")
 assert(runtime._mode_family("c") == "command")
 
+local ctx_buf = vim.api.nvim_create_buf(false, true)
+vim.api.nvim_buf_set_lines(ctx_buf, 0, -1, false, { "abcdef", "当前行abcdef", "afterline" })
+local disabled_context = telemetry._text_context(ctx_buf, 2, config)
+assert(disabled_context.current_line == "")
+assert(#disabled_context.before == 0)
+
+local ctx_config = config_mod.resolve({
+  brain = {
+    enabled = true,
+    provider = "local_llama",
+    context = {
+      lines_before = 1,
+      lines_after = 1,
+      max_line_chars = 4,
+      max_total_chars = 10,
+    },
+  },
+})
+local context = telemetry._text_context(ctx_buf, 2, ctx_config)
+assert(vim.fn.strchars(context.current_line) <= 4)
+local context_chars = vim.fn.strchars(context.current_line)
+for _, line in ipairs(context.before) do context_chars = context_chars + vim.fn.strchars(line) end
+for _, line in ipairs(context.after) do context_chars = context_chars + vim.fn.strchars(line) end
+assert(context_chars <= 10)
+vim.api.nvim_buf_delete(ctx_buf, { force = true })
+
 familiar.setup({ enabled = false, core = { enabled = false } })
 assert(familiar.status().running == false)
 assert(vim.fn.exists(":FamiliarDemo") == 2)
 assert(vim.fn.exists(":FamiliarSkin") == 2)
+assert(vim.fn.exists(":FamiliarBrainStatus") == 2)
+assert(vim.fn.exists(":FamiliarBrainInstall") == 2)
+assert(vim.fn.exists(":FamiliarBrainRemove") == 2)
 assert(familiar.skin("spirit") == "spirit")
 assert(familiar.skin() == "spirit")
+assert(familiar.brain_status().configured.enabled == false)
 print("familiar.nvim smoke: ok")
