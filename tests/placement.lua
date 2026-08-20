@@ -69,6 +69,12 @@ assert(renderer.is_safe_position(win, avatar, opts, from) == true)
 assert(renderer.is_safe_position(win, avatar, opts, target) == true)
 assert(renderer.is_safe_path(win, avatar, opts, from, target) == false)
 
+local guard_before = renderer.stats().safety_suppressed
+assert(renderer.draw(win, avatar, "idle", { x = x, y = 4 }) == false)
+assert(renderer.stats().safety_suppressed == guard_before + 1)
+assert(renderer.draw(win, avatar, "idle", target) == true)
+renderer.hide()
+
 local safe_trail = renderer._filter_safe_points(win, {
   { x = x, y = 4, glyph = "x" },
   { x = x, y = 10, glyph = "x" },
