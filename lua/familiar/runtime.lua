@@ -116,9 +116,28 @@ local function frame_for_behavior(behavior)
   return next(state.avatar.frames)
 end
 
+local function motion_frame_names(kind)
+  local frames = state.avatar.motion and state.avatar.motion[kind]
+  if frames and #frames > 0 then return frames end
+
+  local animation = state.avatar.animations[kind]
+  if animation then
+    if animation.frames and #animation.frames > 0 then return animation.frames end
+    if animation.steps and #animation.steps > 0 then
+      local names = {}
+      for _, step in ipairs(animation.steps) do
+        names[#names + 1] = step.frame
+      end
+      return names
+    end
+  end
+
+  return nil
+end
+
 local function current_frame(t)
   if state.motion then
-    local motion_frames = state.avatar.motion and state.avatar.motion[state.motion.kind]
+    local motion_frames = motion_frame_names(state.motion.kind)
     if motion_frames and #motion_frames > 0 then
       local pose_ms = state.config.animation.expression.motion_pose_ms
       local elapsed = t - state.motion.started_ms
