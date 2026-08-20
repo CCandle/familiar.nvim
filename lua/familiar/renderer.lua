@@ -255,10 +255,17 @@ local function last_char_byte_col(line)
   return vim.fn.byteidx(line, chars - 1) + 1
 end
 
+local function virtual_text_width(chunks)
+  local width = 0
+  for _, chunk in ipairs(chunks or {}) do width = width + vim.fn.strdisplaywidth(chunk[1] or "") end
+  return width
+end
+
 local function right_edges(win)
   local height = vim.api.nvim_win_get_height(win)
   local width = vim.api.nvim_win_get_width(win)
   local pos = vim.api.nvim_win_get_position(win)
+  local buf = vim.api.nvim_win_get_buf(win)
   local edges = {}
   for row = 0, height - 1 do edges[row] = -1 end
 
@@ -268,7 +275,7 @@ local function right_edges(win)
   local top, bottom = bounds[1], bounds[2]
 
   for lnum = top, bottom do
-    local line = (vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(win), lnum - 1, lnum, false)[1] or "")
+    local line = (vim.api.nvim_buf_get_lines(buf, lnum - 1, lnum, false)[1] or "")
     local first = vim.fn.screenpos(win, lnum, 1)
     if first.row and first.row > 0 then
       local r1 = first.row - pos[1] - 1
@@ -289,6 +296,46 @@ local function right_edges(win)
       end
     end
   end
+
+  local ok, marks = pcall(vim.api.nvim_buf_get_extmarks, buf, -1, { top - 1, 0 }, { bottom - 1, -1 }, {
+    details = true,
+    type = "virt_text",
+  })
+  if ok then
+    for _, mark in ipairs(marks) do
+      local lnum = mark[2] + 1
+      local byte_col = mark[3] + 1
+      local details = mark[4] or {}
+      local text_width = virtual_text_width(details.virt_text)
+      if text_width > 0 then
+        local screen = vim.fn.screenpos(win, lnum, byte_col)
+        if not screen.row or screen.row <= 0 then
+          local line = (vim.api.nvim_buf_get_lines(buf, lnum - 1, lnum, false)[1] or "")
+          screen = vim.fn.screenpos(win, lnum, last_char_byte_col(line))
+        end
+        if screen.row and screen.row > 0 then
+          local row = screen.row - pos[1] - 1
+          if row >= 0 and row < height then
+            local mode = details.virt_text_pos or "eol"
+            local start_col = screen.col - pos[2] - 1
+            local edge
+            if mode == "right_align" then
+              edge = width - 1
+            elseif mode == "win_col" and details.virt_text_win_col ~= nil then
+              edge = details.virt_text_win_col + text_width - 1
+            elseif mode == "inline" then
+              edge = math.max((edges[row] or -1) + text_width, start_col + text_width - 1)
+            elseif mode == "overlay" then
+              edge = start_col + text_width - 1
+            else
+              edge = (edges[row] or -1) + text_width + 1
+            end
+            edges[row] = math.max(edges[row] or -1, math.min(width - 1, edge))
+          end
+        end
+      end
+    end
+  end
   return edges
 end
 
@@ -302,6 +349,7 @@ end
 
 local function placement_context(win, avatar, opts)
   if not valid_win(win) then return nil end
+  opts = opts or {}
   local width = vim.api.nvim_win_get_width(win)
   local height = vim.api.nvim_win_get_height(win)
   local sprite_w, sprite_h = avatar.width, render_height(avatar)
@@ -330,6 +378,14 @@ local function placement_context(win, avatar, opts)
     edges = edges,
     desired = desired,
   }
+end
+
+local function position_safe(ctx, position)
+  local q = quantize_position(position)
+  if q.x + ctx.sprite_w + ctx.margin > ctx.width or q.y + ctx.sprite_h + ctx.margin > ctx.height then
+    return false
+  end
+  return area_safe(ctx.edges, q.x, q.y, ctx.sprite_w, ctx.sprite_h, ctx.margin)
 end
 
 function M.find_safe_positions(win, avatar, opts)
@@ -362,11 +418,26 @@ function M.is_safe_position(win, avatar, opts, position)
   if not position then return false end
   local ctx = placement_context(win, avatar, opts)
   if not ctx then return false end
-  local q = quantize_position(position)
-  if q.x + ctx.sprite_w + ctx.margin > ctx.width or q.y + ctx.sprite_h + ctx.margin > ctx.height then
-    return false
+  return position_safe(ctx, position)
+end
+
+function M.is_safe_path(win, avatar, opts, from, target)
+  if not from or not target then return false end
+  local ctx = placement_context(win, avatar, opts)
+  if not ctx then return false end
+
+  local dx, dy = target.x - from.x, target.y - from.y
+  local steps = math.max(1, math.ceil(math.max(math.abs(dx), math.abs(dy))))
+  for step = 0, steps do
+    local progress = step / steps
+    if not position_safe(ctx, {
+      x = from.x + dx * progress,
+      y = from.y + dy * progress,
+    }) then
+      return false
+    end
   end
-  return area_safe(ctx.edges, q.x, q.y, ctx.sprite_w, ctx.sprite_h, ctx.margin)
+  return true
 end
 
 function M.draw(parent, avatar, frame_name, position)
@@ -456,8 +527,29 @@ local function ensure_trail_slot(index, parent)
   return slot
 end
 
-function M.draw_trail(parent, avatar, samples)
+local function filter_safe_points(parent, samples, opts)
+  if not valid_win(parent) then return {} end
+  opts = opts or {}
+  local width = vim.api.nvim_win_get_width(parent)
+  local height = vim.api.nvim_win_get_height(parent)
+  local margin = opts.margin or 0
+  local edges = right_edges(parent)
+  local safe = {}
+  for _, sample in ipairs(samples or {}) do
+    local q = quantize_position(sample)
+    if q.x + 1 + margin <= width
+      and q.y + 1 + margin <= height
+      and area_safe(edges, q.x, q.y, 1, 1, margin)
+    then
+      safe[#safe + 1] = sample
+    end
+  end
+  return safe
+end
+
+function M.draw_trail(parent, avatar, samples, opts)
   if not valid_win(parent) then return end
+  samples = filter_safe_points(parent, samples, opts)
   local color = avatar.palette.effect or avatar.palette.outline or "#888888"
 
   for index, sample in ipairs(samples) do
@@ -544,5 +636,8 @@ end
 function M._render_height(avatar)
   return render_height(avatar)
 end
+
+M._filter_safe_points = filter_safe_points
+M._right_edges = right_edges
 
 return M

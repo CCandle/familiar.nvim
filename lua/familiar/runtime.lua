@@ -284,7 +284,7 @@ local function update_trail(t)
   end
 
   if #visible > 0 and state.parent then
-    renderer.draw_trail(state.parent, state.avatar, visible)
+    renderer.draw_trail(state.parent, state.avatar, visible, state.config.render)
   else
     renderer.clear_trail()
   end
@@ -414,7 +414,8 @@ local function finish_transition()
   apply_intent(state.intent)
 end
 
-local function warp_to(target)
+local function warp_to(target, opts)
+  opts = opts or {}
   state.stats.warps = state.stats.warps + 1
   state.transition = { kind = "warp", target = target }
   state.motion = nil
@@ -431,6 +432,12 @@ local function warp_to(target)
     })
   end
 
+  if opts.immediate then
+    renderer.hide()
+    arrive()
+    return
+  end
+
   if not play_sequence("vanish", { protected = true, force = true, on_done = arrive }) then arrive() end
 end
 
@@ -438,15 +445,22 @@ local function begin_relocation(target, opts)
   opts = opts or {}
   if not target then
     if state.position then
-      state.transition = { kind = "hide" }
-      play_sequence("vanish", {
-        protected = true,
-        force = true,
-        on_done = function()
-          renderer.hide()
-          state.position, state.target, state.transition = nil, nil, nil
-        end,
-      })
+      local current_safe = renderer.is_safe_position(state.parent, state.avatar, state.config.render, state.position)
+      if current_safe then
+        state.transition = { kind = "hide" }
+        play_sequence("vanish", {
+          protected = true,
+          force = true,
+          on_done = function()
+            renderer.hide()
+            state.position, state.target, state.transition = nil, nil, nil
+          end,
+        })
+      else
+        renderer.hide()
+        state.position, state.target, state.motion, state.transition = nil, nil, nil, nil
+        state.trail_samples = {}
+      end
     else
       renderer.hide()
     end
@@ -482,6 +496,16 @@ local function begin_relocation(target, opts)
   if state.config.animation.stickiness.enabled and not should_move and not opts.force and current_safe then
     state.stats.suppressed_moves = state.stats.suppressed_moves + 1
     state.target = { x = state.position.x, y = state.position.y }
+    return
+  end
+
+  if not current_safe then
+    warp_to(target, { immediate = true })
+    return
+  end
+
+  if not renderer.is_safe_path(state.parent, state.avatar, state.config.render, state.position, target) then
+    warp_to(target)
     return
   end
 
@@ -521,26 +545,40 @@ local function recompute_target(force, reason)
     return
   end
 
+  local changed_context = state.parent ~= parent or state.buffer ~= buf
+  local current_safe
+  if not changed_context and state.position then
+    current_safe = renderer.is_safe_position(parent, state.avatar, state.config.render, state.position)
+    if current_safe and not force then
+      if state.motion
+        and not renderer.is_safe_path(parent, state.avatar, state.config.render, state.position, state.motion.target)
+      then
+        state.motion = nil
+        state.target = { x = state.position.x, y = state.position.y }
+        state.last_motion_end_ms = now_ms()
+        state.trail_samples = {}
+        renderer.clear_trail()
+        apply_intent(state.intent)
+      else
+        state.target = state.motion and { x = state.motion.target.x, y = state.motion.target.y }
+          or { x = state.position.x, y = state.position.y }
+      end
+      return
+    end
+  end
+
   local t = wall_ms()
   local throttle = state.config.render.recompute_throttle_ms or 80
-  if not force and t - state.last_recompute_ms < throttle then return end
+  local safety_urgent = current_safe == false
+  if not force and not safety_urgent and t - state.last_recompute_ms < throttle then return end
   state.last_recompute_ms = t
 
-  local changed_context = state.parent ~= parent or state.buffer ~= buf
   if changed_context then
     renderer.hide()
     state.position, state.target, state.motion = nil, nil, nil
     state.trail_samples = {}
   end
   state.parent, state.buffer = parent, buf
-
-  if not changed_context and state.position and not force then
-    local safe = renderer.is_safe_position(parent, state.avatar, state.config.render, state.position)
-    if safe then
-      state.target = { x = state.position.x, y = state.position.y }
-      return
-    end
-  end
 
   local target = renderer.find_safe_position(parent, state.avatar, state.config.render)
   if changed_context then
@@ -552,6 +590,7 @@ local function recompute_target(force, reason)
     winresized = 0.95,
     winscrolled = 0.45,
     diagnosticchanged = 0.75,
+    text_changed = 1.00,
     modechanged = 0.35,
     wander = 0.30,
   })[reason] or 0.55
@@ -703,6 +742,8 @@ local function on_editor_event(kind, args)
   elseif kind == "diagnosticchanged" then
     recompute_target(false, "diagnosticchanged")
     send_snapshot(true)
+  elseif kind == "text_changed" then
+    recompute_target(false, "text_changed")
   elseif kind == "bufwritepost" then
     local t = now_ms()
     local cooldown = state.config.animation.expression.save_reaction_cooldown_ms
@@ -713,7 +754,7 @@ local function on_editor_event(kind, args)
     send_snapshot(true)
   end
 
-  if client.running() and kind ~= "cursor_moved" and kind ~= "typing" then
+  if client.running() and kind ~= "cursor_moved" and kind ~= "typing" and kind ~= "text_changed" then
     state.seq = state.seq + 1
     client.send({
       type = "event",

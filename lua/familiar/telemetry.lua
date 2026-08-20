@@ -128,6 +128,14 @@ function M.setup(config, on_event)
     end,
   })
 
+  vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI", "TextChangedP" }, {
+    group = state.group,
+    callback = function(args)
+      touch(args.event ~= "TextChanged")
+      emit("text_changed", args)
+    end,
+  })
+
   vim.api.nvim_create_autocmd("BufEnter", {
     group = state.group,
     callback = function(args)

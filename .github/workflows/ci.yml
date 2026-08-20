@@ -54,3 +54,5 @@ jobs:
           echo "$PWD/nvim-linux-x86_64/bin" >> "$GITHUB_PATH"
       - name: Lua smoke test
         run: nvim --headless -u tests/minimal_init.lua -l tests/smoke.lua
+      - name: Spatial safety regression test
+        run: nvim --headless -u tests/minimal_init.lua -l tests/placement.lua

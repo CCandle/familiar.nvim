@@ -38,9 +38,10 @@ Set `FAMILIAR_CORE_BIN` to override discovery during experiments.
 
 ```sh
 nvim --headless -u tests/minimal_init.lua -l tests/smoke.lua
+nvim --headless -u tests/minimal_init.lua -l tests/placement.lua
 ```
 
-The smoke test checks module loading, avatar validation, half-block frame conversion, and disabled setup. Visual rendering cannot be validated headlessly.
+The smoke test checks module loading, avatar validation, half-block frame conversion, and disabled setup. The placement test verifies ordinary and virtual-text occupancy, safe motion paths, trail suppression, and text-change invalidation. Final visual rendering still requires an interactive Neovim session.
 
 ## Visual test checklist
 

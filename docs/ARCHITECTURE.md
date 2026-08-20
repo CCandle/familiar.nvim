@@ -147,10 +147,11 @@ A safe-placement pass currently uses:
 
 - window width/height;
 - visible buffer lines and their display width;
+- inline, end-of-line, right-aligned, and fixed-column virtual text;
 - skin dimensions;
 - configured margin.
 
-The current implementation prefers empty space to the right of visible text and can produce multiple safe candidates. Future occupancy can include virtual text, diagnostics, folds, other floats, UI-reserved areas, and selection-aware zones.
+The current implementation prefers empty space to the right of visible text and can produce multiple safe candidates. Animated relocation is allowed only when every sampled screen cell on the route remains safe; otherwise the familiar uses its vanish/appear transition. Text changes invalidate placement, and unsafe trail cells are suppressed. Future occupancy can include folds, other floats, UI-reserved areas, and selection-aware zones.
 
 ### Stickiness
 
