@@ -1,24 +1,5 @@
 local M = {}
 
-local function plugin_root()
-  local files = vim.api.nvim_get_runtime_file("lua/familiar/init.lua", false)
-  if #files == 0 then return nil end
-  return vim.fs.dirname(vim.fs.dirname(vim.fs.dirname(files[1])))
-end
-
-local default_model_path
-do
-  local root = plugin_root()
-  if root then
-    default_model_path = vim.fs.joinpath(
-      root,
-      "target",
-      "models",
-      "SmolLM2-135M-Instruct-Q4_K_M.gguf"
-    )
-  end
-end
-
 M.animation_profiles = {
   balanced = { fps = 60, duration_ms = 250, easing = "cubic" },
   high_refresh = { fps = 120, duration_ms = 250, easing = "cubic" },
@@ -36,8 +17,8 @@ M.defaults = {
   },
 
   brain = {
-    enabled = true,
-    provider = "local_llama", -- rule | local_llama | ollama | openai_compatible
+    enabled = false,
+    provider = "rule", -- rule | local_llama | ollama | openai_compatible
     model = nil,
     endpoint = nil, -- complete chat-completions URL
     base_url = nil, -- standard OpenAI-compatible base URL; /chat/completions is appended
@@ -68,7 +49,7 @@ M.defaults = {
     },
 
     local_model = {
-      model_path = default_model_path,
+      model_path = nil,
       n_ctx = 2048,
       n_threads = 4,
       n_gpu_layers = 99,

@@ -10,6 +10,8 @@ local state = {
   highlights = {},
   last_content_key = nil,
   last_position_key = nil,
+  safety_context = nil,
+  safety_opts = nil,
   trail = {
     pool = {},
     highlights = {},
@@ -19,6 +21,7 @@ local state = {
     position_updates = 0,
     position_skips = 0,
     trail_updates = 0,
+    safety_suppressed = 0,
   },
 }
 
@@ -368,7 +371,8 @@ local function placement_context(win, avatar, opts)
     desired = math.min(desired, math.max(margin, cursor_screen.row - win_pos[1] + 1))
   end
 
-  return {
+  local ctx = {
+    win = win,
     width = width,
     height = height,
     sprite_w = sprite_w,
@@ -378,6 +382,9 @@ local function placement_context(win, avatar, opts)
     edges = edges,
     desired = desired,
   }
+  state.safety_context = ctx
+  state.safety_opts = opts
+  return ctx
 end
 
 local function position_safe(ctx, position)
@@ -387,6 +394,29 @@ local function position_safe(ctx, position)
   end
   return area_safe(ctx.edges, q.x, q.y, ctx.sprite_w, ctx.sprite_h, ctx.margin)
 end
+
+local function actual_position_safe(parent, avatar, position)
+  if not position or not valid_win(parent) then return false end
+  local ctx = state.safety_context
+  local sprite_h = render_height(avatar)
+  if not ctx or ctx.win ~= parent or ctx.sprite_w ~= avatar.width or ctx.sprite_h ~= sprite_h then
+    ctx = placement_context(parent, avatar, state.safety_opts or {})
+  end
+  return ctx ~= nil and position_safe(ctx, position)
+end
+
+local function invalidate_safety()
+  state.safety_context = nil
+end
+
+local safety_group = vim.api.nvim_create_augroup("FamiliarRenderSafety", { clear = true })
+vim.api.nvim_create_autocmd(
+  { "BufEnter", "DiagnosticChanged", "TextChanged", "TextChangedI", "TextChangedP", "WinResized", "WinScrolled" },
+  {
+    group = safety_group,
+    callback = invalidate_safety,
+  }
+)
 
 function M.find_safe_positions(win, avatar, opts)
   local ctx = placement_context(win, avatar, opts)
@@ -443,16 +473,23 @@ end
 function M.draw(parent, avatar, frame_name, position)
   if not position or not valid_win(parent) then
     M.hide()
-    return
+    return false
   end
   local frame = avatar.frames[frame_name]
-  if not frame then return end
+  if not frame then return false end
+
+  if not actual_position_safe(parent, avatar, position) then
+    close_surface()
+    M.clear_trail()
+    state.stats.safety_suppressed = state.stats.safety_suppressed + 1
+    return false
+  end
 
   define_base_highlight()
   position_surface(parent, avatar, position)
 
   local content_key = table.concat({ avatar.id, avatar_kind(avatar), frame_name }, ":")
-  if state.last_content_key == content_key and valid_win(state.win) then return end
+  if state.last_content_key == content_key and valid_win(state.win) then return true end
 
   local lines, spans = frame_lines(avatar, frame)
   local buf = ensure_buffer()
@@ -471,6 +508,7 @@ function M.draw(parent, avatar, frame_name, position)
   vim.bo[buf].modifiable = false
   state.last_content_key = content_key
   state.stats.content_updates = state.stats.content_updates + 1
+  return true
 end
 
 local function dim_hex(color, factor)
@@ -611,6 +649,8 @@ function M.reset_surface()
   state.highlights = {}
   state.last_content_key = nil
   state.last_position_key = nil
+  state.safety_context = nil
+  state.safety_opts = nil
 end
 
 function M.stop()
@@ -639,5 +679,7 @@ end
 
 M._filter_safe_points = filter_safe_points
 M._right_edges = right_edges
+M._actual_position_safe = actual_position_safe
+M._invalidate_safety = invalidate_safety
 
 return M

@@ -30,8 +30,9 @@ prove that runtime semantics do not depend on one anatomy. The original 16x16
 logical-pixel fox is still bundled as the alternate "fox" skin.
 
 Current behavior reacts deterministically to editor mode, typing, diagnostics,
-idle time, viewport space, saves, and rapid buffer switching. Optional AI
-providers are planned but are not a current runtime dependency.
+idle time, viewport space, saves, and rapid buffer switching. RuleBrain is the
+default. Optional local llama.cpp, Ollama, and OpenAI-compatible BrainProviders
+can make low-frequency semantic choices inside a deterministic action envelope.
 
 ===============================================================================
 2. Requirements                                             *familiar-requirements*
@@ -39,10 +40,11 @@ providers are planned but are not a current runtime dependency.
 - Neovim >= 0.12
 - true-color terminal recommended
 - lazy.nvim is the currently documented installation path
-- Rust/Cargo is required only when building the optional familiar-core sidecar
+- Rust/Cargo is required when building the optional familiar-core sidecar
+- all AI providers require familiar-core
 
-No Ollama process, model download, or permanent daemon is required for the
-current plugin.
+No AI provider, model download, Ollama process, or permanent daemon is required
+for the default deterministic plugin.
 
 ===============================================================================
 3. Setup                                                           *familiar-setup*
@@ -57,6 +59,16 @@ Example lazy.nvim spec: >lua
   }
 <
 
+For embedded local llama.cpp support, build with: >lua
+
+  {
+    "CCandle/familiar.nvim",
+    event = "VeryLazy",
+    build = "cargo build --release -p familiar-core --features local-llama",
+    opts = {},
+  }
+<
+
 Minimal explicit setup: >lua
 
   require("familiar").setup({
@@ -66,6 +78,26 @@ Minimal explicit setup: >lua
     },
   })
 <
+
+The default brain configuration is deterministic: >lua
+
+  brain = {
+    enabled = false,
+    provider = "rule",
+  }
+<
+
+To opt into the managed embedded model after building with `local-llama`: >lua
+
+  brain = {
+    enabled = true,
+    provider = "local_llama",
+  }
+<
+
+Then run `:FamiliarBrainInstall` once. The managed GGUF is stored under
+`stdpath("data")/familiar/models/` unless `brain.local_model.model_path` is
+explicitly overridden.
 
 Built-in animation profiles:
 
@@ -83,6 +115,14 @@ Advanced example: >lua
     core = {
       enabled = true,
       bin = nil,
+    },
+
+    brain = {
+      enabled = false,
+      provider = "rule",
+      interval_ms = 20000,
+      event_min_interval_ms = 5000,
+      choice_ttl_ms = 30000,
     },
 
     animation = {
@@ -149,7 +189,8 @@ Advanced example: >lua
 
 :FamiliarStatus                                              *:FamiliarStatus*
     Inspect the current skin, mode family, behavior, motion, position, intent,
-    animation configuration, runtime counters, and renderer counters.
+    animation configuration, runtime counters, renderer counters, and brain
+    status.
 
 :FamiliarSkin [name]                                          *:FamiliarSkin*
     With no argument, display the configured skin. With a name, validate and
@@ -173,9 +214,29 @@ Advanced example: >lua
       :FamiliarDemo peek 4000
 <
 
+:FamiliarBrainStatus                                  *:FamiliarBrainStatus*
+    Show configured provider, runtime state, reliability metrics, local-llama
+    capability, and managed-model status without exposing secrets.
+
+:FamiliarBrainReload                                  *:FamiliarBrainReload*
+    Re-send the current provider configuration and re-resolve environment-based
+    credentials without restarting Neovim.
+
+:FamiliarBrainTest                                      *:FamiliarBrainTest*
+    Run one real, side-effect-free inference through the configured provider.
+    The result does not enter the familiar's normal behavior cache.
+
+:FamiliarBrainInstall                                *:FamiliarBrainInstall*
+    Download and verify the managed SmolLM2-135M-Instruct GGUF used by the
+    embedded local_llama provider.
+
+:FamiliarBrainRemove                                  *:FamiliarBrainRemove*
+    Remove the managed local GGUF.
+
 :checkhealth familiar                                      *familiar-health*
     Check Neovim version, true-color setting, all built-in skin validations,
-    animation defaults, sidecar discovery, and current runtime state.
+    animation defaults, sidecar discovery, BrainProvider status, model status,
+    and current runtime state.
 
 ===============================================================================
 5. Animation                                                   *familiar-animation*
@@ -313,9 +374,12 @@ is skipped.
 Both actor kinds use a borderless, non-focusable floating window as an internal
 render surface. Edited buffer contents are never modified.
 
-Safe placement currently favors blank space at the right side of the active
-normal window. If no usable region exists, the familiar hides rather than
-covering the document.
+Safe placement favors blank space at the right side of the active normal
+window. Route preflight checks animated relocation, and the renderer separately
+checks the actual quantized cell immediately before drawing. If a route or the
+current cell becomes unsafe, the familiar hides/phases rather than covering the
+document. This final-frame guard reuses cached occupancy, so 60/120 FPS motion
+does not rescan the whole buffer every tick.
 
 ===============================================================================
 8. Architecture                                               *familiar-architecture*
@@ -327,11 +391,11 @@ The optional `familiar-core` Rust child owns normalized world state and behavior
 policy. It communicates with Lua via versioned JSON Lines over stdio and exits
 with Neovim.
 
-`RuleBrain` is mandatory/fail-safe. Future AI integration is provider-based and
-opt-in: an embedded llama.cpp/GGUF backend, Ollama, OpenAI-compatible endpoints,
-or custom adapters may eventually choose among already-safe semantic actions.
-No provider is allowed to control animation FPS, raw coordinates, skin glyphs,
-or arbitrary editor commands.
+`RuleBrain` is mandatory/fail-safe and is the product default. Optional AI is
+provider-based and opt-in: embedded llama.cpp/GGUF, Ollama, and OpenAI-compatible
+endpoints may choose among already-safe semantic actions. No provider is allowed
+to control animation FPS, raw coordinates, skin glyphs, or arbitrary editor
+commands.
 
 See the repository `docs/` directory for the presentation-engine design, ADRs,
 protocol, skin-format direction, world model, and BrainProvider design.
@@ -341,14 +405,15 @@ protocol, skin-format direction, world model, and BrainProvider design.
 
 - Mote/Spirit art, timing, and mode gestures still require real-terminal tuning.
 - Safe placement still favors right-side blank space and does not model every
-  virtual-text/UI obstacle or selection geometry.
+  external UI obstacle or selection geometry.
 - `peek` exists visually but is not yet a complete edge-spatial behavior.
 - Terminal mode has a semantic policy but terminal-buffer rendering is still
   constrained by normal-window eligibility.
 - Markdown/LaTeX structural telemetry is designed but not yet implemented.
-- AI providers/inference are intentionally not implemented yet.
-- Headless CI validates schemas/timing logic but cannot prove visual quality
-  across terminal/font/theme combinations.
+- AI behavior quality still needs real A/B testing across the 135M local lower
+  bound, Ollama models, and hosted providers; AI remains optional.
+- Headless CI validates schemas/timing/safety logic but cannot prove visual
+  quality across terminal/font/theme combinations.
 
 ===============================================================================
 vim:tw=78:ts=8:noet:ft=help:norl:
