@@ -18,7 +18,7 @@ sleep
 
 ## Provider architecture
 
-The embedded `local_llama` provider is enabled by default when its sidecar and model are available. Missing or failed AI infrastructure falls back to the deterministic RuleBrain; network-backed providers remain opt-in.
+The product default is `RuleBrain` with AI disabled. `local_llama`, Ollama, and hosted OpenAI-compatible providers are explicit opt-ins. Missing or failed AI infrastructure always falls back to deterministic behavior.
 
 ```text
 BrainProvider
@@ -156,7 +156,7 @@ brain = {
 
 ## Rule-only default
 
-No AI provider is required:
+No AI provider is required. This is the default product configuration:
 
 ```lua
 require("familiar").setup({
@@ -167,7 +167,7 @@ require("familiar").setup({
 })
 ```
 
-This requires no network or model download.
+It requires no network or model download.
 
 ## Embedded local llama.cpp
 
