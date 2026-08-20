@@ -112,6 +112,11 @@ function M.stop()
   pcall(vim.api.nvim_set_decoration_provider, state.ns, {})
 end
 
+function M._tracked_signature(win)
+  local tracked = state.signatures[win]
+  return tracked and tracked.value or nil
+end
+
 M._signature = signature
 
 return M
