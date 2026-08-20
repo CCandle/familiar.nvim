@@ -1,4 +1,4 @@
-*familiar.nvim*             Pixel-art familiar for Neovim
+*familiar.nvim*             Terminal-native familiar for Neovim
 
 ===============================================================================
 CONTENTS                                                     *familiar-contents*
@@ -7,20 +7,31 @@ CONTENTS                                                     *familiar-contents*
 2. Requirements ........................................ |familiar-requirements|
 3. Setup ................................................ |familiar-setup|
 4. Commands ............................................. |familiar-commands|
-5. Architecture ......................................... |familiar-architecture|
-6. Current limitations .................................. |familiar-limitations|
+5. Animation ............................................ |familiar-animation|
+6. Mode interaction ..................................... |familiar-modes|
+7. Rendering and skins .................................. |familiar-rendering|
+8. Architecture ......................................... |familiar-architecture|
+9. Current limitations .................................. |familiar-limitations|
 
 ===============================================================================
 1. Introduction                                           *familiar-introduction*
 
-familiar.nvim is an experimental terminal-native pixel-art companion. It lives
-inside the editor without modifying file buffers, opening a chat UI, or
-producing free-form dialogue.
+familiar.nvim is an experimental terminal-native companion. It lives inside
+the editor without modifying file buffers, opening a chat UI, or producing
+free-form dialogue.
 
-The default avatar is a small fox. Current behavior reacts deterministically to
-basic editor state such as typing, diagnostics, idle time, viewport space, and
-rapid buffer switching. A constrained local AI policy is planned, but is not a
-current runtime dependency.
+The default skin is "mote", an abstract glyph familiar limited to at most
+three terminal rows. It expresses state through a compact face grammar,
+optional ears/headwear, gestures, posture, timing, and small Unicode effects.
+It is not canonically a cat, fox, or any other fixed species.
+
+A second glyph skin, "spirit", deliberately removes the ear silhouette to
+prove that runtime semantics do not depend on one anatomy. The original 16x16
+logical-pixel fox is still bundled as the alternate "fox" skin.
+
+Current behavior reacts deterministically to editor mode, typing, diagnostics,
+idle time, viewport space, saves, and rapid buffer switching. Optional AI
+providers are planned but are not a current runtime dependency.
 
 ===============================================================================
 2. Requirements                                             *familiar-requirements*
@@ -30,7 +41,8 @@ current runtime dependency.
 - lazy.nvim is the currently documented installation path
 - Rust/Cargo is required only when building the optional familiar-core sidecar
 
-No Ollama process or permanent daemon is required.
+No Ollama process, model download, or permanent daemon is required for the
+current plugin.
 
 ===============================================================================
 3. Setup                                                           *familiar-setup*
@@ -45,23 +57,75 @@ Example lazy.nvim spec: >lua
   }
 <
 
-Equivalent explicit setup: >lua
+Minimal explicit setup: >lua
+
+  require("familiar").setup({
+    skin = "mote",
+    animation = {
+      profile = "balanced",
+    },
+  })
+<
+
+Built-in animation profiles:
+
+  balanced      60 FPS active motion, 250 ms relocation, cubic easing
+  high_refresh  120 FPS active motion, 250 ms relocation, cubic easing
+  economy       30 FPS active motion, 280 ms relocation, cubic easing
+
+Advanced example: >lua
 
   require("familiar").setup({
     enabled = true,
     debug = false,
+    skin = "mote",
+
     core = {
       enabled = true,
       bin = nil,
     },
-    render = {
-      frame_ms = 125,
-      margin = 1,
-      min_width = 48,
-      min_height = 12,
-      move_step = 2,
-      warp_distance = 32,
+
+    animation = {
+      profile = "balanced",
+      fps = 60,
+      duration_ms = 250,
+      easing = "cubic",
+
+      motion = {
+        run_distance = 10,
+        dash_distance = 26,
+        dash_duration_ms = 190,
+        retarget_min_remaining_ms = 70,
+        retarget_max_extend_ms = 80,
+      },
+
+      trail = {
+        mode = "auto",
+        min_distance = 7,
+        sample_ms = 38,
+        lifetime_ms = 180,
+        max_samples = 4,
+      },
+
+      stickiness = {
+        enabled = true,
+        utility_threshold = 0.18,
+        distance_cost = 0.45,
+        distance_scale = 24,
+        recent_move_window_ms = 700,
+        recent_move_cost = 0.35,
+        moving_cost = 0.15,
+      },
     },
+
+    render = {
+      margin = 1,
+      min_width = 36,
+      min_height = 8,
+      warp_distance = 40,
+      recompute_throttle_ms = 80,
+    },
+
     telemetry = {
       snapshot_ms = 1200,
       max_visible_lines = 120,
@@ -69,8 +133,7 @@ Equivalent explicit setup: >lua
   })
 <
 
-The public configuration surface is intentionally small during early
-development.
+`avatar = "fox"` remains accepted as a compatibility alias for `skin = "fox"`.
 
 ===============================================================================
 4. Commands                                                     *familiar-commands*
@@ -79,60 +142,213 @@ development.
     Start the familiar runtime if it is not already running.
 
 :FamiliarStop                                                  *:FamiliarStop*
-    Stop animation, telemetry, renderer resources, and the Rust child process.
+    Stop presentation, telemetry, renderer resources, and the Rust child.
 
 :FamiliarToggle                                              *:FamiliarToggle*
     Toggle the runtime.
 
 :FamiliarStatus                                              *:FamiliarStatus*
-    Inspect the current avatar, animation, position, intent, and sidecar state.
+    Inspect the current skin, mode family, behavior, motion, position, intent,
+    animation configuration, runtime counters, and renderer counters.
+
+:FamiliarSkin [name]                                          *:FamiliarSkin*
+    With no argument, display the configured skin. With a name, validate and
+    switch the skin. Completion lists built-in skins: mote, spirit, and fox.
+    Skin selection can be changed while the runtime is stopped; it is applied
+    on the next start.
 
 :FamiliarDemo {animation} [duration_ms]                        *:FamiliarDemo*
-    Temporarily force an existing avatar animation for visual inspection. This
-    is primarily a development/QA command. Completion lists the current fox
-    animations. The duration defaults to 4000 ms and is bounded internally.
+    Temporarily force an existing skin animation for visual inspection.
+    Completion lists animations for the configured skin. Duration defaults to
+    4000 ms and is bounded internally.
 
     Examples: >vim
 
-      :FamiliarDemo idle 5000
+      :FamiliarSkin spirit
       :FamiliarDemo inspect 5000
-      :FamiliarDemo walk 3000
       :FamiliarDemo sleep 5000
+      :FamiliarDemo wave 4000
+      :FamiliarDemo cheer 4000
+      :FamiliarDemo magic 4000
+      :FamiliarDemo peek 4000
 <
 
 :checkhealth familiar                                      *familiar-health*
-    Check Neovim version, true-color setting, avatar validation, sidecar
-    discovery, and current runtime state.
+    Check Neovim version, true-color setting, all built-in skin validations,
+    animation defaults, sidecar discovery, and current runtime state.
 
 ===============================================================================
-5. Architecture                                               *familiar-architecture*
+5. Animation                                                   *familiar-animation*
 
-The Neovim frontend is intentionally Lua-native: autocmds, buffers/windows,
-telemetry, floating render surface, highlights, and child-process lifecycle are
-handled with Neovim APIs.
+Spatial animation is time-domain rather than step-domain.
 
-The optional `familiar-core` Rust child process owns normalized world state and
-behavior policy. It communicates with Lua via versioned JSON Lines over stdio.
-It is not a permanent system service and should exit with Neovim.
+An ordinary relocation has a fixed total wall-clock duration (250 ms in the
+balanced profile). Distance changes the visible locomotion class -- walk, run,
+dash, or eventually warp/phase -- instead of making movement time grow one
+terminal row at a time.
 
-Pixel art is represented as indexed logical pixels. Two vertical logical pixels
-are packed into one terminal cell with Unicode half/full block glyphs and
-true-color highlight groups. Runtime PNG/JPG assets are not required.
+Active motion uses `animation.fps` as a refresh-rate ceiling. The high-frequency
+timer exists only while spatial motion/trail is active. Idle expression does
+not run a permanent 60/120 Hz renderer loop.
 
-See the repository `docs/` directory for ADRs, protocol details, avatar-format
-direction, world-model design, and the future tiny-brain contract.
+The default easing is cubic ease-out. Accepted names currently include:
+
+  linear
+  quad / out_quad
+  cubic / out_cubic
+  quart / out_quart
+
+RETARGETING ~
+
+If a new destination arrives while the familiar is moving, the old destination
+is replaced rather than queued. The current burst deadline is preserved when
+possible. A very late retarget may extend the deadline only by a configured
+bounded amount. Repeated scrolling should therefore converge on the newest
+screen state instead of replaying stale trips.
+
+STICKINESS ~
+
+A newly computed safe location is not automatically worth a visible move. If
+the current position remains safe, relocation is gated by semantic utility and
+penalties for distance, recent movement, being already in motion, and current
+editor mode.
+
+Safety overrides stickiness. If the current area becomes unsafe, the familiar
+may move or hide regardless of nuisance penalties.
+
+TRAIL ~
+
+The default trail mode is `auto`. Short/micro movement normally has no trail.
+Longer run/dash motion may leave sparse residues which fade through a glyph
+vocabulary similar to: >
+
+  ≡ -> ⠂ -> ⠄ -> · -> gone
+<
+
+The actor itself is never duplicated into a whole-character smear.
+
+EXPRESSION ~
+
+Skin expression uses explicit millisecond keyframes rather than repeating a
+frame N times on the motion clock. Blink, glance, silhouette twitch/shimmer,
+stretch, save, appear/vanish, and celebration can therefore have independent
+timing.
+
+Ambient actions are intentionally rare. Most idle time should look calm; the
+occasional small action creates more perceived life than constant motion.
 
 ===============================================================================
-6. Current limitations                                         *familiar-limitations*
+6. Mode interaction                                               *familiar-modes*
 
-- The fox art and animation set are provisional.
-- Safe placement currently favors blank space at the right side of the active
-  normal window and does not yet model every virtual-text/UI obstacle.
-- Compact/peek bodies and richer edge-entry/exit transitions are planned.
+Mode changes alter the familiar's behavior budget, not only its face.
+
+NORMAL ~
+    Relaxed/observant. Ambient glance, twitch/shimmer, or stretch may occur at
+    low frequency. Relocation has the least extra penalty.
+
+INSERT ~
+    Quietly focused. Ambient novelty is suppressed and unnecessary movement is
+    strongly discouraged. Safety relocation is still allowed.
+
+VISUAL / SELECT ~
+    Attentive to the user's active selection. Ambient novelty and frivolous
+    relocation are suppressed.
+
+OPERATOR-PENDING ~
+    Anticipatory/focused while an operator command is being completed. The
+    familiar tries not to move during the pending interaction.
+
+REPLACE ~
+    Alert/focused and unobtrusive; movement is discouraged.
+
+COMMAND-LINE / PROMPT ~
+    Compact presentation and frozen position when that position remains safe.
+
+TERMINAL ~
+    Quiet/background policy. Current renderer eligibility still follows the
+    normal-window restrictions and is not yet a full terminal-buffer feature.
+
+The skin maps these semantic states to frames. Runtime mode logic never depends
+on Mote-specific ears, Spirit-specific sparkles, or any other visible anatomy.
+
+===============================================================================
+7. Rendering and skins                                       *familiar-rendering*
+
+The renderer supports two skin kinds.
+
+GLYPH SKINS ~
+
+Mote and Spirit store frames as one to three rows of styled text segments. A
+segment has literal text and an optional semantic color role.
+
+Mote: >
+
+     /\_/\
+    ( •ω• )
+<
+
+Spirit: >
+
+       ✦
+     ~(•ᴗ•)~
+<
+
+One-line states are useful for compact motion, while three rows are reserved
+for poses that need more posture. Frames are padded into a stable transparent
+surface so their anchor does not jump with frame height.
+
+PIXEL SKINS ~
+
+The alternate fox stores indexed logical pixels. Two vertical logical pixels
+are packed into one terminal cell with Unicode half/full blocks and true-color
+highlight groups.
+
+RENDER CHANNELS ~
+
+Actor content, actor position, and effects are cached independently. A motion
+tick that only changes position should not rewrite actor text or extmarks. If
+the logical motion still rounds to the same terminal cell, the position update
+is skipped.
+
+Both actor kinds use a borderless, non-focusable floating window as an internal
+render surface. Edited buffer contents are never modified.
+
+Safe placement currently favors blank space at the right side of the active
+normal window. If no usable region exists, the familiar hides rather than
+covering the document.
+
+===============================================================================
+8. Architecture                                               *familiar-architecture*
+
+Lua owns Neovim-specific telemetry, mode policy, safe placement, presentation
+scheduling, floating renderer surfaces, and child-process lifecycle.
+
+The optional `familiar-core` Rust child owns normalized world state and behavior
+policy. It communicates with Lua via versioned JSON Lines over stdio and exits
+with Neovim.
+
+`RuleBrain` is mandatory/fail-safe. Future AI integration is provider-based and
+opt-in: an embedded llama.cpp/GGUF backend, Ollama, OpenAI-compatible endpoints,
+or custom adapters may eventually choose among already-safe semantic actions.
+No provider is allowed to control animation FPS, raw coordinates, skin glyphs,
+or arbitrary editor commands.
+
+See the repository `docs/` directory for the presentation-engine design, ADRs,
+protocol, skin-format direction, world model, and BrainProvider design.
+
+===============================================================================
+9. Current limitations                                         *familiar-limitations*
+
+- Mote/Spirit art, timing, and mode gestures still require real-terminal tuning.
+- Safe placement still favors right-side blank space and does not model every
+  virtual-text/UI obstacle or selection geometry.
+- `peek` exists visually but is not yet a complete edge-spatial behavior.
+- Terminal mode has a semantic policy but terminal-buffer rendering is still
+  constrained by normal-window eligibility.
 - Markdown/LaTeX structural telemetry is designed but not yet implemented.
-- AI inference is intentionally not implemented yet.
-- Visual quality must still be validated in the real terminal/font/theme
-  combination; headless CI cannot prove appearance.
+- AI providers/inference are intentionally not implemented yet.
+- Headless CI validates schemas/timing logic but cannot prove visual quality
+  across terminal/font/theme combinations.
 
 ===============================================================================
 vim:tw=78:ts=8:noet:ft=help:norl:

@@ -6,6 +6,18 @@ license = "MIT"
 description = "Lifecycle-bound Rust sidecar for familiar.nvim"
 publish = false
 
+[features]
+default = []
+local-llama = ["dep:llama-cpp-4"]
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
+ureq = { version = "3", features = ["json"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+llama-cpp-4 = { version = "=0.4.4", optional = true, default-features = false, features = ["prebuilt", "metal"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+llama-cpp-4 = { version = "=0.4.4", optional = true, default-features = false, features = ["prebuilt", "native"] }

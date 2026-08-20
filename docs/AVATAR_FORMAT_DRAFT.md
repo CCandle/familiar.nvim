@@ -1,61 +1,224 @@
-# Avatar package format — design draft
+# Skin package format — design draft
 
-> This document defines the direction, not a frozen compatibility contract. The first fox is still embedded in Lua while the renderer is validated in a real terminal.
+> This document defines direction, not a frozen compatibility contract. The built-in skins are still Lua tables while the external data-only schema is being designed. Earlier documentation called these packages "avatars"; `avatar` remains a compatibility term in code/config while the user-facing concept moves to **skin**.
 
 ## Goal
 
-An avatar is not a hard-coded engine type. It is a data package that can change appearance, animation timing, available actions, emotes, and bounded personality tendencies without changing the familiar engine.
+A skin is presentation data, not a hard-coded engine type.
 
-A future user should be able to ask an AI/code agent to create an avatar package, inspect the generated text assets in Git, and load it without producing PNG/JPG runtime assets or arbitrary executable code.
+The runtime selects semantic states such as `idle`, `focus`, `visual`, `inspect`, `sleep`, or locomotion classes such as `walk` and `dash`. The skin decides how those semantics look and how its own micro-actions are timed.
 
-## Proposed layout
+The current implementation supports two renderer kinds:
+
+- **glyph** — preferred/default direction; one to three terminal rows of styled text segments;
+- **pixel** — retained half-block indexed-pixel renderer used by the original fox.
+
+The public schema should support both without letting runtime behavior depend on species-specific branches.
+
+## Design principles
+
+1. **At most three terminal rows for glyph actors.** Small size is a product constraint.
+2. **Expression over detail.** Faces, gestures, posture, headwear, ears/horns/hair, and tiny effects carry identity.
+3. **Timing is part of the skin.** A blink and a stretch do not share one global sprite interval.
+4. **Motion timing is not part of the skin.** The engine owns wall-clock relocation; the skin only supplies walk/run/dash poses.
+5. **Semantic color roles.** Frames reference roles such as `outline`, `face`, `effect`, or `alert` rather than Neovim highlight group names.
+6. **Unicode is optional decoration.** Core identity should not depend on one fragile exotic glyph.
+7. **Actions are semantic.** A brain chooses `inspect`; it never chooses the visible string `(•̀_•́)σ`.
+8. **Packages should become data-only.** Built-in Lua helpers are authoring convenience, not the intended untrusted external extension surface.
+
+## Current built-in glyph shape
+
+Mote v2 is conceptually equivalent to:
+
+```lua
+{
+  id = "mote",
+  kind = "glyph",
+  version = 2,
+  width = 14,
+  height = 3,
+
+  palette = {
+    outline = "#F49B48",
+    face = "#F4E1BC",
+    effect = "#68CDE0",
+    success = "#7ACD84",
+    alert = "#EB7070",
+    muted = "#9C968D",
+  },
+
+  frames = {
+    idle = {
+      rows = {
+        {
+          { text = "   " },
+          { text = "/\\_/\\", role = "outline" },
+        },
+        {
+          { text = "  " },
+          { text = "(", role = "outline" },
+          { text = " •ω• ", role = "face" },
+          { text = ")", role = "outline" },
+        },
+      },
+    },
+  },
+
+  poses = {
+    idle = "idle",
+    focus = "focus",
+    visual = "visual",
+    operator = "operator",
+  },
+
+  motion = {
+    walk = { "walk_1", "walk_2" },
+    run = { "run_1", "run_2" },
+    dash = { "dash_1", "dash_2" },
+  },
+
+  animations = {
+    blink = {
+      steps = {
+        { frame = "blink", duration_ms = 70 },
+        { frame = "idle", duration_ms = 90 },
+      },
+    },
+  },
+}
+```
+
+A glyph frame may contain one, two, or three rows. Each row is a sequence of text segments. Segments without a role use default/transparent presentation; segments with a role receive the skin palette color for that role.
+
+The renderer pads short frames into the skin's maximum height. This keeps the spatial anchor stable while allowing a compact one-line motion pose and a three-line rest pose to share one render surface.
+
+## Poses, motion poses, and animations
+
+These are deliberately separate concepts.
+
+### Semantic poses
+
+`poses` maps long-lived runtime semantics to a stable frame:
+
+```lua
+poses = {
+  idle = "idle",
+  focus = "focus",
+  visual = "visual",
+  command = "command",
+}
+```
+
+Mode-aware behavior can therefore change skins without adding species-specific branches to the runtime.
+
+### Motion poses
+
+`motion` maps locomotion class to a short cycling list of frames:
+
+```lua
+motion = {
+  walk = { "walk_1", "walk_2" },
+  run = { "run_1", "run_2" },
+  dash = { "dash_1", "dash_2" },
+}
+```
+
+The presentation engine determines the actor's continuous logical position and total movement duration. The skin controls only what the character looks like while that motion is underway.
+
+### Timed animations
+
+Discrete expressions use explicit millisecond keyframes:
+
+```lua
+animations = {
+  ear_twitch = {
+    steps = {
+      { frame = "ear_twitch", duration_ms = 110 },
+      { frame = "idle", duration_ms = 110 },
+      { frame = "ear_twitch", duration_ms = 90 },
+      { frame = "idle", duration_ms = 120 },
+    },
+  },
+}
+```
+
+`duration_ms` may eventually allow either a single duration or a bounded `{min,max}` range for intentionally irregular idle actions.
+
+The old built-in `frames = {...}` animation form remains accepted for compatibility and is interpreted with a fallback frame duration.
+
+## Proposed external layout
+
+A future data-only package may look like:
 
 ```text
-my-avatar/
-├── avatar.toml
+my-skin/
+├── skin.toml
 ├── palette.toml
+├── poses.toml
+├── motion.toml
 ├── animations.toml
-├── behavior.toml
-├── emotes.toml
-└── sprites/
-    ├── idle_01.pix
-    ├── idle_02.pix
-    ├── walk_01.pix
-    ├── walk_02.pix
+└── frames/
+    ├── idle.toml
+    ├── focus.toml
+    ├── inspect.toml
     └── ...
 ```
 
-## Manifest
+The exact file split is not frozen. The important contract is the semantic model, not the extension names.
 
-Tentative shape:
+## Manifest direction
 
 ```toml
 schema = 1
-id = "fox"
-name = "Fox Familiar"
+id = "mote-like"
+name = "My Familiar"
+renderer = "glyph"
 
-[body.full]
-width = 16
-height = 16
-
-[body.compact]
-width = 8
-height = 8
+[body]
+width = 14
+height = 3
 
 [personality]
 curiosity = 0.80
 energy = 0.60
 shyness = 0.15
 restlessness = 0.35
-attention_to_errors = 0.75
-attention_to_writing = 0.55
 ```
 
-Personality values are hints in `[0, 1]`. They bias deterministic and model policies; they do not directly execute behavior.
+Personality values are hints in `[0,1]`. They may bias deterministic or AI policy later; they do not directly execute presentation logic.
 
-## Sprite data
+## Glyph-frame serialization
 
-A `.pix` file is an indexed logical-pixel matrix. Example:
+A TOML-like sketch:
+
+```toml
+[[row]]
+segments = [
+  { text = "   " },
+  { text = "/\\_/\\", role = "outline" },
+]
+
+[[row]]
+segments = [
+  { text = "  " },
+  { text = "(", role = "outline" },
+  { text = " •ω• ", role = "face" },
+  { text = ")", role = "outline" },
+]
+```
+
+Requirements:
+
+- rendered display width of every row must be `<= body.width`;
+- glyph frame height must be in `1..3`;
+- role references must exist in the palette;
+- a segment cannot contain embedded newlines;
+- package validation must use terminal display width, not UTF-8 byte length;
+- short animation frames may occupy fewer rows than the skin maximum.
+
+## Pixel-frame compatibility
+
+The retained pixel format remains an indexed logical-pixel matrix:
 
 ```text
 ................
@@ -65,134 +228,84 @@ A `.pix` file is an indexed logical-pixel matrix. Example:
 ...
 ```
 
-`.` means transparent. Other characters refer to palette entries. The exact stable palette-key alphabet will be chosen before avatar schema v1 is frozen.
+`.` means transparent. Other characters refer to palette entries.
 
-Requirements:
+Pixel requirements:
 
-- all rows in a frame have identical logical width;
-- height must be compatible with the selected renderer (the half-block renderer currently wants an even height);
-- unknown palette indices are validation errors;
-- assets are data only and cannot execute code.
+- all rows have identical logical width;
+- the current half-block renderer requires even logical height;
+- unknown palette indices are validation errors.
 
-## Palette
+Pixel support remains useful for experimentation, but it is no longer the default visual direction.
 
-Tentative example:
+## Semantic vocabulary and fallback
 
-```toml
-[colors]
-"1" = "#393552"
-"2" = "#c47d5b"
-"3" = "#e8ad82"
-"4" = "#191724"
-"5" = "#eb6f92"
-"6" = "#f6c177"
-```
-
-The engine may later support palette adaptation against the current colorscheme, but an avatar must remain valid with its declared palette alone.
-
-## Animation graph
-
-Animation is separated from individual frames.
-
-```toml
-[animation.idle]
-frames = ["idle_01", "idle_01", "idle_02"]
-loop = true
-
-[animation.walk]
-frames = ["walk_01", "walk_02"]
-loop = true
-
-[transition.full_to_peek]
-animation = "leave_edge"
-next_body = "peek"
-```
-
-The stable format should eventually support per-animation/frame timing rather than forcing every avatar to share one global frame interval.
-
-The engine owns interruption rules. A new intent does not automatically cut the current frame sequence: transitions may finish, blend into a compatible state, or be interrupted only at declared safe points.
-
-## Required semantic actions
-
-The engine should work with semantic action IDs, not fox-specific names. A full avatar will eventually provide reasonable visual implementations for a core vocabulary such as:
+The runtime should converge on a compact stable vocabulary, for example:
 
 ```text
 idle
 focus
-look
+visual
+operator
+replace
+command
 inspect
+curious
+sleep
 walk
 run
-hop
-sleep
-wake
+dash
 appear
 vanish
-enter_edge
-leave_edge
 peek
 ```
 
-An avatar may add optional actions. Missing optional actions fall back through declared aliases rather than engine branches such as `if avatar == fox`.
-
-## Emotes
-
-Emotes are also declared assets. The brain selects an ID only:
+A skin may add showcase/micro-actions such as:
 
 ```text
-none
-question
-exclaim
-ellipsis
-sparkle
-sweat
-sleep
-heart
-music
-check
-cross
-book
-fire
+blink
+glance
+ear_twitch
+stretch
+wave
+cheer
+magic
+save
+success
 ```
 
-An avatar decides how an emote looks: a Unicode symbol, tiny pixel overlay, or small animation. A model never writes the visible glyph/string itself.
+Missing optional actions should eventually fall back through declared aliases instead of engine branches such as `if skin == "mote"`.
 
-## Behavior data
+## Interruptibility
 
-The first public behavior customization should be declarative rather than arbitrary Lua/Rust execution.
+The final external contract should allow a small interruption policy for discrete actions:
 
-Possible shape:
-
-```toml
-[behavior.inspect_error]
-weight = 0.8
-requires = ["diagnostic_error"]
-preferred_action = "inspect"
-preferred_emote = "question"
-
-[behavior.sleep]
-weight = 0.6
-idle_after_seconds = 120
-preferred_action = "sleep"
+```text
+immediate
+safe_point
+finish
 ```
 
-This is intentionally weaker than a scripting language. Lua/WASM behavior extensions are deferred until there is a real use case and a compatibility/security model.
+The engine remains authoritative. Mode changes, safety relocation, and visibility transitions may override ordinary ambient actions. A short protected transition such as disappear/appear should not be torn apart by a blink event.
 
 ## Validation
 
-Before schema v1, Rust should gain a package validator that checks:
+Before schema v1, validation should cover:
 
 - manifest/schema version;
-- dimensions and frame consistency;
-- palette references;
-- referenced animation frames;
-- transition graph targets;
-- required action/fallback availability;
-- emote references;
+- renderer kind and dimensions;
+- glyph row display widths/count and role references;
+- pixel palette references and dimensions;
+- pose frame references;
+- motion frame references;
+- timed-animation frame references and valid positive durations;
+- fallback/alias targets;
 - personality ranges.
 
-Invalid avatar data must fail closed without taking Neovim down.
+Invalid external skin data must fail closed without taking Neovim down.
 
-## AI-generated avatars
+## AI-generated skins
 
-The format is deliberately text-first so an AI/code agent can generate and revise an avatar in normal source-control workflow. Generation happens outside the runtime. The runtime model, if enabled, still cannot synthesize sprite data or executable logic while the editor is running.
+The format remains text-first so an AI/code agent can generate and revise a skin in normal source-control workflow. Generation happens outside runtime.
+
+An enabled behavior model still cannot synthesize visible glyph strings, palette data, or executable skin logic while the editor is running.

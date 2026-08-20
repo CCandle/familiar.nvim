@@ -16,20 +16,32 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - run: cargo fmt --all -- --check
       - run: cargo test --workspace
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo build --release -p familiar-core
+      - name: Check optional embedded llama backend
+        run: cargo check -p familiar-core --features local-llama
+      - run: cargo fmt --all -- --check
       - name: Core protocol smoke test
         run: |
           output="$(printf '%s\n' \
-            '{"type":"hello","protocol":1,"client":"ci"}' \
+            '{"type":"hello","protocol":2,"client":"ci"}' \
+            '{"type":"configure","brain":{"enabled":false,"provider":"rule"}}' \
             '{"type":"ping","id":7}' \
             '{"type":"shutdown"}' \
             | target/release/familiar-core)"
           printf '%s\n' "$output"
           grep -q '"type":"ready"' <<<"$output"
+          grep -q '"type":"brain_status"' <<<"$output"
           grep -q '"type":"pong"' <<<"$output"
+
+  rust-macos-local-llama:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check embedded llama Metal backend on macOS
+        run: cargo check -p familiar-core --features local-llama
 
   neovim:
     runs-on: ubuntu-latest
@@ -42,3 +54,5 @@ jobs:
           echo "$PWD/nvim-linux-x86_64/bin" >> "$GITHUB_PATH"
       - name: Lua smoke test
         run: nvim --headless -u tests/minimal_init.lua -l tests/smoke.lua
+      - name: Spatial safety regression test
+        run: nvim --headless -u tests/minimal_init.lua -l tests/placement.lua

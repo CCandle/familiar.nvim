@@ -15,26 +15,96 @@ end
 
 local function touch(typing)
   state.last_activity = now()
-  if typing then
-    state.typing_until = state.last_activity + 900
-  end
+  if typing then state.typing_until = state.last_activity + 900 end
 end
 
 local function prune_switches()
   local cutoff = now() - 10000
   local keep = {}
   for _, stamp in ipairs(state.switches) do
-    if stamp >= cutoff then
-      keep[#keep + 1] = stamp
-    end
+    if stamp >= cutoff then keep[#keep + 1] = stamp end
   end
   state.switches = keep
 end
 
 local function emit(kind, args)
-  if state.on_event then
-    state.on_event(kind, args or {})
+  if state.on_event then state.on_event(kind, args or {}) end
+end
+
+local function truncate_chars(text, max_chars)
+  if max_chars <= 0 then return "" end
+  if vim.fn.strchars(text) <= max_chars then return text end
+  return vim.fn.strcharpart(text, 0, max_chars)
+end
+
+local function contains(list, value)
+  for _, candidate in ipairs(list or {}) do
+    if candidate == value then return true end
   end
+  return false
+end
+
+local function context_allowed(buf, opts)
+  local filetype = vim.bo[buf].filetype
+  if contains(opts.deny_filetypes, filetype) then return false end
+
+  local name = vim.api.nvim_buf_get_name(buf)
+  local basename = name ~= "" and vim.fs.basename(name) or ""
+  for _, pattern in ipairs(opts.deny_name_patterns or {}) do
+    local ok, matched = pcall(string.match, basename, pattern)
+    if ok and matched then return false end
+  end
+  return true
+end
+
+local function text_context(buf, cursor_row, config)
+  local brain = config.brain or {}
+  local opts = brain.context or {}
+  if not brain.enabled or opts.include_buffer_text == false or not context_allowed(buf, opts) then
+    return { current_line = "", before = {}, after = {} }
+  end
+
+  local total_budget = math.max(0, opts.max_total_chars or 0)
+  local line_budget = math.max(0, opts.max_line_chars or 0)
+  if total_budget == 0 or line_budget == 0 then
+    return { current_line = "", before = {}, after = {} }
+  end
+
+  local line_count = vim.api.nvim_buf_line_count(buf)
+  local before_n = math.max(0, opts.lines_before or 0)
+  local after_n = math.max(0, opts.lines_after or 0)
+  local first = math.max(1, cursor_row - before_n)
+  local last = math.min(line_count, cursor_row + after_n)
+  local raw = vim.api.nvim_buf_get_lines(buf, first - 1, last, false)
+
+  local remaining = total_budget
+  local function take(line)
+    if remaining <= 0 then return "" end
+    local capped = truncate_chars(line, math.min(line_budget, remaining))
+    remaining = remaining - vim.fn.strchars(capped)
+    return capped
+  end
+
+  local current_index = cursor_row - first + 1
+  local current_line = take(raw[current_index] or "")
+
+  local before_reversed = {}
+  for index = current_index - 1, 1, -1 do
+    local line = take(raw[index] or "")
+    if line == "" and remaining <= 0 then break end
+    before_reversed[#before_reversed + 1] = line
+  end
+  local before = {}
+  for index = #before_reversed, 1, -1 do before[#before + 1] = before_reversed[index] end
+
+  local after = {}
+  for index = current_index + 1, #raw do
+    local line = take(raw[index] or "")
+    if line == "" and remaining <= 0 then break end
+    after[#after + 1] = line
+  end
+
+  return { current_line = current_line, before = before, after = after }
 end
 
 function M.setup(config, on_event)
@@ -58,6 +128,14 @@ function M.setup(config, on_event)
     end,
   })
 
+  vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI", "TextChangedP" }, {
+    group = state.group,
+    callback = function(args)
+      touch(args.event ~= "TextChanged")
+      emit("text_changed", args)
+    end,
+  })
+
   vim.api.nvim_create_autocmd("BufEnter", {
     group = state.group,
     callback = function(args)
@@ -71,18 +149,14 @@ function M.setup(config, on_event)
   vim.api.nvim_create_autocmd({ "BufWritePost", "DiagnosticChanged", "WinResized", "WinScrolled", "ModeChanged" }, {
     group = state.group,
     callback = function(args)
-      if args.event ~= "WinScrolled" then
-        touch(false)
-      end
+      if args.event ~= "WinScrolled" then touch(false) end
       emit(string.lower(args.event), args)
     end,
   })
 end
 
 function M.stop()
-  if state.group then
-    pcall(vim.api.nvim_del_augroup_by_id, state.group)
-  end
+  if state.group then pcall(vim.api.nvim_del_augroup_by_id, state.group) end
   state.group = nil
   state.on_event = nil
 end
@@ -106,9 +180,7 @@ function M.snapshot(config)
   local last = math.min(bottom, top + max_lines - 1)
   local lines = vim.api.nvim_buf_get_lines(buf, top - 1, last, false)
   local widths = {}
-  for _, line in ipairs(lines) do
-    widths[#widths + 1] = vim.fn.strdisplaywidth(line)
-  end
+  for _, line in ipairs(lines) do widths[#widths + 1] = vim.fn.strdisplaywidth(line) end
 
   local errors = #vim.diagnostic.get(buf, { severity = vim.diagnostic.severity.ERROR })
   local warnings = #vim.diagnostic.get(buf, { severity = vim.diagnostic.severity.WARN })
@@ -132,16 +204,17 @@ function M.snapshot(config)
       botline = bottom,
       line_display_widths = widths,
     },
-    diagnostics = {
-      errors = errors,
-      warnings = warnings,
-    },
+    diagnostics = { errors = errors, warnings = warnings },
     activity = {
       idle_ms = math.max(0, now() - state.last_activity),
       typing = now() < state.typing_until,
       buffer_switches_10s = #state.switches,
     },
+    context = text_context(buf, cursor[1], config),
   }
 end
+
+M._context_allowed = context_allowed
+M._text_context = text_context
 
 return M

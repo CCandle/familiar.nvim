@@ -7,26 +7,29 @@ This roadmap is ordered to avoid building an AI system before the underlying com
 - [x] public repository and MIT license
 - [x] architecture document
 - [x] Lua/Rust boundary ADR
-- [x] renderer ADR
+- [x] terminal-native renderer ADRs
 - [x] avatar-package ADR
 - [x] versioned JSONL protocol
 - [x] lazy.nvim-oriented plugin skeleton
 
-## M1 — pixel fox vertical slice
+## M1 — terminal character vertical slice
 
-Goal: prove that terminal-native pixel animation is visually worthwhile.
+Goal: prove a familiar can be expressive while staying tiny enough to coexist with code.
 
-- [x] indexed sprite representation
-- [x] half-block renderer
-- [x] transparent-run rendering
-- [x] provisional fox frames
+- [x] indexed half-block pixel renderer
+- [x] provisional pixel fox
+- [x] real-terminal visual evaluation of the pixel direction
+- [x] real-terminal evaluation of Unicode contour/subcell directions
+- [x] adopt a 1–3 row glyph actor as the default visual language
+- [x] built-in abstract `mote` avatar
+- [x] semantic color roles for glyph frames
+- [x] retain the pixel fox as an alternate avatar
 - [x] safe right-side placement
 - [x] low-FPS animation timer
 - [x] non-blocking commands/lifecycle
-- [ ] verify appearance in iTerm2 with the primary font/theme
-- [ ] tune sprite proportions/colors from real screenshots
-- [ ] add compact and peek bodies
-- [ ] expand idle/walk/run/appear/vanish transition frames
+- [ ] tune Mote face/gesture grammar from real Neovim screenshots
+- [ ] add more posture-aware transitions without increasing the three-row limit
+- [ ] add a setup/preview flow for avatar and terminal compatibility
 
 ## M2 — continuity and editor world
 
@@ -36,9 +39,11 @@ Goal: make the familiar feel like an inhabitant rather than a widget.
 - [x] buffer-switch activity tracking
 - [x] sidecar lifecycle scaffold
 - [x] deterministic Rust policy scaffold
+- [x] short relocation uses walk/run instead of coordinate jumps
+- [x] long relocation uses vanish/appear
 - [ ] occupancy map beyond simple right-side whitespace
 - [ ] path planning and movement interruption rules
-- [ ] animated full/compact/peek transitions
+- [ ] make `peek`/edge states real spatial behavior
 - [ ] richer diagnostic attention targets
 - [ ] Markdown heading/paragraph context
 - [ ] VimTeX/LaTeX section/environment context
@@ -47,14 +52,16 @@ Goal: make the familiar feel like an inhabitant rather than a widget.
 
 ## M3 — avatar package v1
 
-- [ ] move default fox out of Lua code into a stable text asset format
-- [ ] manifest schema
-- [ ] palette schema
+- [ ] move built-in glyph frames out of executable Lua into a stable text asset format
+- [ ] manifest schema with renderer kind
+- [ ] semantic glyph palette schema
+- [ ] retained indexed-pixel palette schema
 - [ ] animation graph schema
-- [ ] emote library schema
+- [ ] emote/overlay schema
 - [ ] personality parameters
 - [ ] validation tool in Rust
-- [ ] example second avatar to prove the abstraction is real
+- [ ] example second glyph avatar with a different silhouette grammar
+- [ ] example pixel avatar to prove dual-renderer compatibility
 
 ## M4 — tiny brain benchmark
 

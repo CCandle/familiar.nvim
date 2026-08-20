@@ -4,48 +4,50 @@
 
 `familiar.nvim` is a terminal-native animated familiar for Neovim. It should feel present in the editor without becoming another panel, notification source, or chat agent.
 
-The companion has three layers of behavior:
+The system has four cooperating layers:
 
-1. **Body** — deterministic animation and rendering.
-2. **World** — editor/workspace state, spatial occupancy, memory, and semantic events.
-3. **Brain** — a policy that selects declared behavior intents. The baseline policy is deterministic; a tiny local model may later bias/choose intents.
+1. **Presentation** — deterministic time-domain motion, expression, effects, and rendering.
+2. **World** — editor/workspace state, spatial occupancy, semantic events, and memory.
+3. **Behavior** — deterministic state machine, mode policy, cooldowns, personality state, and safe action selection.
+4. **Brain** — optional low-frequency policy provider. `RuleBrain` is always available; AI providers may later choose among already-safe semantic actions.
 
-The model is never trusted with rendering, arbitrary commands, or free-form user-visible text.
+No model controls animation frames, raw coordinates, arbitrary commands, or free-form visible glyph strings.
 
 ## Architectural boundary
 
 ### Lua frontend
 
-Lua owns everything that is inherently Neovim-specific:
+Lua owns everything inherently Neovim-specific:
 
 - autocmds and lifecycle;
 - buffers, windows, diagnostics and editor mode;
 - bounded telemetry extraction;
-- extmarks and highlight groups;
-- conversion of render plans into Neovim draw operations;
+- spatial safety queries;
+- presentation scheduling and interpolation;
+- floating render surfaces, extmarks and highlight groups;
 - child-process lifecycle and IPC.
 
-Lua should remain small. It should not host model inference, long-term memory, expensive workspace analysis, or complex behavior search.
+The Lua layer should remain lightweight even though presentation is local: active high-refresh work is limited to cheap position/effect updates, while semantic policy and expensive analysis stay off the render path.
 
 ### Rust sidecar
 
-`familiar-core` is a child process attached to one Neovim instance. It owns:
+`familiar-core` is a child process attached to one Neovim instance. It owns or will own:
 
 - normalized world state;
-- behavior intent selection;
-- transition/spatial planning as those systems mature;
-- avatar/personality policy validation;
-- session memory;
-- later, a tiny constrained model backend.
+- deterministic RuleBrain policy;
+- bounded personality/memory state;
+- optional AI BrainProvider implementations;
+- semantic intent validation.
 
-The sidecar communicates over newline-delimited JSON on stdin/stdout. JSONL is deliberately chosen for the early protocol because traffic is tiny, debugging is easy, and both sides can be inspected independently. A binary protocol is not justified until measurement says otherwise.
+The sidecar communicates over newline-delimited JSON on stdin/stdout. Traffic is low-volume and semantic, so a binary protocol is not justified yet.
 
 ### Lifecycle
 
-The sidecar is not installed as a macOS LaunchAgent and is not a permanent daemon.
+The sidecar is not a macOS LaunchAgent and not a permanent daemon.
 
 ```text
 Neovim plugin loads
+  -> deterministic Lua presentation is immediately available
   -> attempt to start familiar-core
   -> handshake
   -> stream bounded semantic snapshots/events
@@ -55,57 +57,125 @@ Neovim exits / plugin stops
   -> send shutdown
   -> close channel
   -> terminate child if needed
-  -> all model/runtime memory is released
+  -> all sidecar/model memory is released
 ```
 
 Failure of the sidecar is non-fatal. The Lua fallback remains functional.
 
+## Presentation engine
+
+Presentation is explicitly split from behavior policy.
+
+```text
+semantic intent / mode / safe placement
+              |
+              v
+       Presentation Planner
+        /       |        \
+       v        v         v
+  Motion     Expression   Effects
+       \        |         /
+              v
+           Renderer
+```
+
+### Time-domain motion
+
+Spatial movement is defined by origin, destination, start time, deadline, locomotion class, and easing.
+
+The actor's logical position is sampled from real elapsed time. Ordinary relocation defaults to 250 ms rather than a fixed number of cells per tick. Distance changes the visual locomotion class (`walk`, `run`, `dash`, or `warp`) instead of making movement arbitrarily long.
+
+In-flight target changes replace stale destinations. The existing burst deadline is preserved when practical, with only a bounded late-retarget extension.
+
+See [`ANIMATION_ENGINE.md`](ANIMATION_ENGINE.md) and ADR 0005.
+
+### Active refresh rate
+
+The default active motion profile targets 60 FPS. A 120 FPS high-refresh profile and 30 FPS economy profile are available.
+
+This is not a permanent renderer heartbeat. When no spatial motion/trail is active, there is no 60/120 Hz actor redraw loop. Blink, glance, stretch, save reactions, and other expressions are discrete scheduled keyframes.
+
+### Expression
+
+Skin animations use explicit millisecond keyframes rather than repeated frames used as a clock. The runtime may interrupt ordinary ambient actions, while short visibility transitions can be protected long enough to remain visually coherent.
+
+### Effects
+
+Trail/effects are separate from the actor body. The default trail is sparse motion residue, not duplicated whole-character smear.
+
 ## Rendering model
 
-Sprites are indexed logical-pixel matrices. Two logical vertical pixels are packed into one terminal cell:
+Rendering is skin-dependent presentation. The engine does not assume a species or one visual representation.
 
-- same color: `█`
-- top only: `▀`
-- bottom only: `▄`
-- different top/bottom colors: `▀` with foreground/background pair
+### Glyph actor
 
-Fully transparent cells are not emitted. A sprite row is split into contiguous non-transparent runs so transparent gaps do not overwrite the buffer.
+The default direction is a small **1–3 terminal-row glyph actor**.
 
-The frontend uses a borderless, non-focusable, mouse-transparent floating window as an internal **render surface**. This is not a user-facing panel: it has no chrome, never accepts focus, and exists only to place a multi-row sprite in screen-cell coordinates. Pixel colors inside that scratch buffer are applied with extmark highlights. The edited buffer, undo history, and file contents are never modified.
+A glyph frame contains rows of styled text segments with semantic color roles such as `outline`, `face`, `effect`, `success`, `alert`, or `muted`.
 
-A screen-space render surface is preferred over anchoring each sprite row to buffer lines because wrapped Markdown/LaTeX lines can occupy multiple screen rows; a buffer-line-anchored sprite would stretch or fragment under `wrap`.
+This representation spends terminal cells on high-information features:
+
+- face/eyes/mouth;
+- ears, hair, horns, or headwear when useful;
+- hand gestures;
+- posture;
+- tiny effects and motion residue.
+
+Rows are validated using terminal display width, not UTF-8 byte length. Short frames are padded into a stable transparent render surface.
+
+### Indexed pixel skin
+
+The earlier pixel renderer remains supported. Pixel sprites are indexed logical-pixel matrices packed vertically with Unicode half blocks. The original fox uses this path as a compatibility and regression target, but it is not the default product direction.
+
+### Shared actor surface
+
+Both render kinds use a borderless, non-focusable, mouse-transparent floating window as an internal render surface. Edited buffers, undo history, and file contents are never modified.
+
+### Channel separation
+
+Actor **content**, **position**, and **effects** have independent caches.
+
+A position-only motion tick should usually call only `nvim_win_set_config()`. It should not rebuild frame strings or extmarks. If the logical position still rounds to the same terminal cell, the update is skipped entirely.
+
+Trail particles/residues use a tiny reusable pool of one-cell floats rather than opening and closing windows on every effect sample.
 
 ## Spatial model
 
-The companion lives in **screen space**, not document coordinates.
+The familiar lives in **screen space**, not document coordinates.
 
-A safe-placement pass uses:
+A safe-placement pass currently uses:
 
 - window width/height;
-- text-column offset (number/sign/fold columns);
-- visible buffer lines;
-- display width of those lines;
-- avatar dimensions;
+- visible buffer lines and their display width;
+- inline, end-of-line, right-aligned, and fixed-column virtual text;
+- skin dimensions;
 - configured margin.
 
-The initial policy prefers empty space to the right of visible text. Future versions may maintain a fuller occupancy map including diagnostics, virtual text, folds, other windows, and reserved UI areas.
+The current implementation prefers empty space to the right of visible text and can produce multiple safe candidates. Animated relocation is allowed only when every sampled screen cell on the route remains safe; otherwise the familiar uses its vanish/appear transition. Text changes invalidate placement, and unsafe trail cells are suppressed. Future occupancy can include folds, other floats, UI-reserved areas, and selection-aware zones.
 
-If no safe area exists, the companion should compact, peek, or hide. Covering important text is a bug, not a fallback.
+### Stickiness
 
-## Motion and continuity
+Safe current placement is intentionally sticky.
 
-Changing coordinates is not itself an animation. Spatial relocation is represented as a transition plan.
+A newly computed location does not automatically trigger movement. Candidate relocation is gated by semantic benefit and penalties for travel distance, recent movement, already being in motion, and current editor-mode policy.
 
-Preferred order:
+Safety overrides stickiness. If the current location becomes unsafe, the familiar may relocate, compact, peek, or hide.
 
-1. short distance: walk/hop;
-2. medium distance: run/dash;
-3. large or obstructed distance: vanish/appear or leave/enter edge;
-4. impossible space: hide.
+This makes "knowing when not to move" a first-class UX behavior rather than an incidental optimization.
 
-Buffer switches cannot safely be delayed merely to show a departure animation. The initial implementation therefore preserves continuity by animating **arrival** in the new buffer (for example, running in from the edge). Later versions may also use pre-leave cues when they can be shown without blocking editor actions.
+## Mode-aware behavior
 
-Display modes (`full`, `compact`, `peek`, `hidden`) also require transitions rather than hard cuts when time and space permit.
+Editor mode changes behavior budgets as well as visible pose.
+
+- **Normal:** richest ambient behavior and lowest relocation penalty.
+- **Insert:** focused, quiet, movement strongly discouraged while safe.
+- **Visual/Select:** attentive to the selection, ambient novelty suppressed.
+- **Operator-pending:** anticipatory/focused, movement discouraged during the pending command.
+- **Replace:** alert/focused, movement discouraged.
+- **Command-line/prompt:** compact/frozen when safe.
+- **Terminal:** quiet/background policy; current render eligibility still follows normal-window constraints.
+
+This policy is independent of skin assets. A skin decides how `focus` or `visual` looks; the runtime decides when those semantics apply.
 
 ## World model
 
@@ -115,10 +185,11 @@ The world is multi-timescale.
 
 Updated without model inference:
 
-- cursor/window position;
-- current viewport;
-- animation frame/timeline;
-- interpolation along an existing path.
+- current actor position and motion plan;
+- viewport geometry needed for safety;
+- expression sequence;
+- effect/trail lifetime;
+- current editor mode family.
 
 ### Semantic editor state
 
@@ -127,54 +198,56 @@ Aggregated from events:
 - current buffer and filetype;
 - buffer switches;
 - typing/idle periods;
-- save/undo/search activity;
-- diagnostics;
+- save activity;
+- diagnostics and trends;
 - build/test results when integrations exist;
-- Markdown/LaTeX structural context;
-- workspace tree summary and open buffers.
+- Markdown/LaTeX/code structural context;
+- workspace/open-buffer summaries when useful.
 
 ### Brain tick
 
-A future model should run only on meaningful events or a low-frequency policy tick. It does not run per keypress or per animation frame.
+Any future AI provider runs only on meaningful semantic events or a low-frequency policy tick. It never runs per keypress, motion tick, or animation frame.
 
 ## Text work is first-class
 
-The world model must not assume that productive work means compiling code.
+The world model must not assume productive work means compiling code.
 
-For Markdown, useful semantic events include heading changes, long writing bursts, list editing, note/link navigation, and buffer/note switches.
+For Markdown, useful events include heading changes, long writing bursts, list editing, note/link navigation, and buffer/note switches.
 
 For LaTeX, useful events include section/subsection changes, environment entry, equations, figures, citations, compilation, and forward-search workflow.
 
-A sustained writing session should often make the familiar *quieter*, not more active.
+A sustained writing session should generally make the familiar **quieter**, not more active.
 
 ## AI boundary
 
-A future model receives a bounded structured snapshot and returns only a schema-valid intent such as:
+The future AI architecture is provider-based and opt-in:
 
-```json
-{
-  "behavior": "inspect",
-  "target": "current_section",
-  "locomotion": "walk",
-  "mood": "curious",
-  "emote": "question",
-  "duration_ms": 12000
-}
+```text
+RuleBrain (mandatory)
+optional local llama.cpp/GGUF
+optional Ollama
+optional OpenAI-compatible endpoint
+optional custom adapter
 ```
 
-Every visible token (`question`, `sparkle`, etc.) maps to an asset declared by the avatar/runtime. The model cannot invent strings, Unicode, colors, commands, paths, or sprite data at runtime.
+The deterministic layer first computes an eligible action set using safety, nuisance limits, cooldowns, mode policy, and presentation state. An AI provider may choose only among those actions.
 
-The deterministic `RuleBrain` always exists and is the fail-safe.
+A provider receives a compact structured snapshot and returns schema-valid semantic intent. It cannot invent visible skin strings, arbitrary screen coordinates, commands, or executable behavior.
+
+See [`BRAIN.md`](BRAIN.md).
 
 ## Performance budget
 
-The companion is decoration, so it receives a strict budget:
+The familiar is decoration, so it receives a strict budget:
 
-- animation typically 2-12 FPS, not 60 FPS;
-- no work when hidden beyond low-frequency state tracking;
-- no AI inference during high-rate typing unless a major event occurs;
+- active spatial motion defaults to 60 FPS; 120 FPS is optional, 30 FPS is economy;
+- high refresh rate does **not** imply high-frequency full content redraw;
+- terminal-cell-quantized duplicate position updates are skipped;
+- idle expression is event/keyframe driven, not a permanent high-FPS loop;
+- hidden state performs only low-frequency semantic tracking;
+- no AI inference during high-rate typing unless a major event explicitly warrants it;
 - sidecar idle CPU should approach zero;
 - no persistent process after Neovim exits;
-- eventual tiny-model target: hundreds, not thousands, of megabytes of resident memory.
+- optional model memory/cost must be isolated from the core no-AI experience.
 
-Performance claims are measurement targets until benchmarked on the primary macOS/iTerm2 environment.
+Performance claims remain measurement targets until repeatedly benchmarked in real terminal environments.
