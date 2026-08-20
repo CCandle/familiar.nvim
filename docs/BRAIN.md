@@ -18,7 +18,7 @@ sleep
 
 ## Provider architecture
 
-AI is disabled by default.
+The embedded `local_llama` provider is enabled by default when its sidecar and model are available. Missing or failed AI infrastructure falls back to the deterministic RuleBrain; network-backed providers remain opt-in.
 
 ```text
 BrainProvider

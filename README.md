@@ -27,7 +27,7 @@ The current vertical slice provides:
 - explicit demo, skin switching, BrainProvider status/reload/test, and managed-model commands;
 - the original half-block pixel renderer and fox skin as a compatibility/experimentation path.
 
-The familiar does **not** need an AI model to feel alive. AI is off by default and acts only as an optional **low-frequency behavior director**. It never renders frames, chooses screen coordinates, invokes editor commands, or emits visible dialogue.
+The familiar does **not** need an AI model to feel alive. The local AI brain is enabled by default when its sidecar and managed model are available, and otherwise falls back to the deterministic engine. AI acts only as a **low-frequency behavior director**: it never renders frames, chooses screen coordinates, invokes editor commands, or emits visible dialogue.
 
 ## Visual language
 
@@ -245,7 +245,7 @@ require("familiar").setup({
 
 ## Optional AI providers
 
-AI remains off by default. The deterministic engine always retains final control over safety, placement, mode handling, animation, and the allowed action set.
+The embedded `local_llama` provider is the default brain configuration. If the model or compatible sidecar is unavailable, the deterministic engine remains fully functional and retains final control over safety, placement, mode handling, animation, and the allowed action set. Network-backed providers remain explicit opt-ins.
 
 ### Embedded local model
 

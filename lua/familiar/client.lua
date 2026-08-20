@@ -56,6 +56,11 @@ local function resolved_headers(source)
   return headers
 end
 
+local function json_object(value)
+  if next(value) == nil then return vim.empty_dict() end
+  return value
+end
+
 local function brain_payload(config)
   local source = config.brain
   local api_key = source.api_key
@@ -63,8 +68,7 @@ local function brain_payload(config)
     api_key = vim.env[source.api_key_env]
   end
 
-  local model_path = source.local_model.model_path
-  if not model_path or model_path == "" then model_path = models.path() end
+  local model_path = models.configured_path(source)
 
   return {
     enabled = source.enabled == true,
@@ -73,8 +77,8 @@ local function brain_payload(config)
     endpoint = source.endpoint,
     base_url = source.base_url,
     api_key = api_key,
-    headers = resolved_headers(source),
-    extra_body = vim.deepcopy(source.extra_body or {}),
+    headers = json_object(resolved_headers(source)),
+    extra_body = json_object(vim.deepcopy(source.extra_body or {})),
     interval_ms = source.interval_ms,
     event_min_interval_ms = source.event_min_interval_ms,
     choice_ttl_ms = source.choice_ttl_ms,

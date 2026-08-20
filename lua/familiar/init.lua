@@ -72,7 +72,26 @@ local function test_brain(callback)
     return false
   end
 
-  return client.probe(snapshot, callback)
+  local busy_error = "provider is busy with a normal decision; retry shortly"
+  local probe_budget_ms = config.brain.timeout_ms
+  if config.brain.provider == "local_llama" then probe_budget_ms = math.max(probe_budget_ms, 30000) end
+  local retry_deadline = vim.uv.now() + probe_budget_ms + 1500
+
+  local function probe_when_idle()
+    return client.probe(snapshot, function(result)
+      if result.error ~= busy_error then
+        callback(result)
+        return
+      end
+      if vim.uv.now() >= retry_deadline then
+        callback(result)
+        return
+      end
+      vim.defer_fn(probe_when_idle, 100)
+    end)
+  end
+
+  return probe_when_idle()
 end
 
 local function notify_model_result(action, ok, message)

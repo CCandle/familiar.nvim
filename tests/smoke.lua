@@ -39,6 +39,16 @@ assert(local_payload.enabled == true)
 assert(local_payload.provider == "local_llama")
 assert(local_payload["local"].model_path == models.configured_path(local_brain.brain))
 assert(local_payload["local"].n_ctx == 2048)
+local encoded_local_payload = vim.json.encode(local_payload)
+assert(string.find(encoded_local_payload, '"headers":{}', 1, true))
+assert(string.find(encoded_local_payload, '"extra_body":{}', 1, true))
+
+local tilde_model = config_mod.resolve({
+  brain = {
+    local_model = { model_path = "~/models/familiar-test.gguf" },
+  },
+})
+assert(client._brain_payload(tilde_model)["local"].model_path == vim.fn.expand("~/models/familiar-test.gguf"))
 
 vim.env.FAMILIAR_TEST_API_KEY = "secret-for-smoke-only"
 local remote_brain = config_mod.resolve({
@@ -228,4 +238,31 @@ assert(familiar.brain_status().configured.enabled == true)
 local probe_result
 assert(familiar.brain_test(function(result) probe_result = result end) == false)
 assert(probe_result and probe_result.ok == false)
+
+local original_runtime_status = runtime.status
+local original_client_running = client.running
+local original_client_probe = client.probe
+local original_telemetry_snapshot = telemetry.snapshot
+runtime.status = function() return { running = true } end
+client.running = function() return true end
+telemetry.snapshot = function() return { mode = "n" } end
+local probe_attempts = 0
+client.probe = function(_, callback)
+  probe_attempts = probe_attempts + 1
+  if probe_attempts == 1 then
+    callback({ ok = false, error = "provider is busy with a normal decision; retry shortly" })
+  else
+    callback({ ok = true, choice = "idle" })
+  end
+  return true, probe_attempts
+end
+local retried_probe_result
+assert(familiar.brain_test(function(result) retried_probe_result = result end) == true)
+assert(vim.wait(1000, function() return retried_probe_result ~= nil end))
+assert(probe_attempts == 2)
+assert(retried_probe_result.ok == true)
+runtime.status = original_runtime_status
+client.running = original_client_running
+client.probe = original_client_probe
+telemetry.snapshot = original_telemetry_snapshot
 print("familiar.nvim smoke: ok")
