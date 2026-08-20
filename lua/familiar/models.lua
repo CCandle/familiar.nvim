@@ -15,6 +15,15 @@ function M.path(model)
   return vim.fs.joinpath(vim.fn.stdpath("data"), "familiar", "models", model.file)
 end
 
+function M.configured_path(brain)
+  local model = M.default
+  local configured = brain and brain.local_model and brain.local_model.model_path
+  if configured and configured ~= "" then
+    return vim.fn.expand(configured)
+  end
+  return M.path(model)
+end
+
 local function gguf_ok(path)
   local file = io.open(path, "rb")
   if not file then return false end
@@ -23,9 +32,9 @@ local function gguf_ok(path)
   return magic == "GGUF"
 end
 
-function M.status(model)
+function M.status(model, path)
   model = model or M.default
-  local path = M.path(model)
+  path = path or M.path(model)
   local stat = uv.fs_stat(path)
   return {
     id = model.id,
@@ -62,18 +71,19 @@ local function run_model_command(bin, args, callback)
   end)
 end
 
-function M.install(bin, model, callback)
+function M.install(bin, model, callback, path)
   model = model or M.default
   callback = callback or function() end
-  local path = M.path(model)
+  path = path or M.path(model)
   vim.fn.mkdir(vim.fs.dirname(path), "p")
   run_model_command(bin, { "install", path, model.url }, callback)
 end
 
-function M.remove(bin, model, callback)
+function M.remove(bin, model, callback, path)
   model = model or M.default
   callback = callback or function() end
-  run_model_command(bin, { "remove", M.path(model) }, callback)
+  path = path or M.path(model)
+  run_model_command(bin, { "remove", path }, callback)
 end
 
 return M

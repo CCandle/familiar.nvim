@@ -509,7 +509,15 @@ impl AiDirector {
 
         self.in_flight = true;
         self.total_requests = self.total_requests.saturating_add(1);
-        let wait = Duration::from_millis(self.config.timeout_ms.saturating_add(1_500));
+        // The first local_llama query pays for model loading and Metal pipeline
+        // compilation before inference starts, so use a much larger probe budget
+        // than the HTTP providers' request timeout.
+        let probe_timeout_ms = if self.config.provider == "local_llama" {
+            self.config.timeout_ms.max(30_000)
+        } else {
+            self.config.timeout_ms
+        };
+        let wait = Duration::from_millis(probe_timeout_ms.saturating_add(1_500));
         match self.receiver.recv_timeout(wait) {
             Ok(reply) => {
                 self.in_flight = false;

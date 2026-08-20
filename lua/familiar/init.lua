@@ -29,7 +29,7 @@ local function brain_status()
       include_buffer_text = config.brain.context.include_buffer_text,
     },
     core = brain_state.get(),
-    local_model = models.status(),
+    local_model = models.status(models.default, models.configured_path(config.brain)),
     core_binary = client.binary(config),
   }
 end
@@ -141,24 +141,27 @@ local function create_commands()
   vim.api.nvim_create_user_command("FamiliarBrainInstall", function()
     local bin = client.binary(config)
     local model = models.default
+    local model_path = models.configured_path(config.brain)
     vim.notify(
       ("familiar brain: downloading %s (~%.0f MB, %s) to\n%s"):format(
         model.id,
         model.approx_bytes / 1000000,
         model.license,
-        models.path(model)
+        model_path
       ),
       vim.log.levels.INFO
     )
     models.install(bin, model, function(ok, message)
       notify_model_result("install", ok, message)
-    end)
+    end, model_path)
   end, { desc = "Download and verify the managed local GGUF brain model" })
 
   vim.api.nvim_create_user_command("FamiliarBrainRemove", function()
-    models.remove(client.binary(config), models.default, function(ok, message)
+    local bin = client.binary(config)
+    local model_path = models.configured_path(config.brain)
+    models.remove(bin, models.default, function(ok, message)
       notify_model_result("remove", ok, message)
-    end)
+    end, model_path)
   end, { desc = "Remove the managed local GGUF brain model" })
 
   vim.api.nvim_create_user_command("FamiliarSkin", function(opts)
