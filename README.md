@@ -27,7 +27,7 @@ The current vertical slice provides:
 - explicit demo, skin switching, BrainProvider status/reload/test, and managed-model commands;
 - the original half-block pixel renderer and fox skin as a compatibility/experimentation path.
 
-The familiar does **not** need an AI model to feel alive. The local AI brain is enabled by default when its sidecar and managed model are available, and otherwise falls back to the deterministic engine. AI acts only as a **low-frequency behavior director**: it never renders frames, chooses screen coordinates, invokes editor commands, or emits visible dialogue.
+The familiar does **not** need an AI model to feel alive. AI is disabled by default and acts only as an optional **low-frequency behavior director**: it never renders frames, chooses screen coordinates, invokes editor commands, or emits visible dialogue. RuleBrain remains the default product behavior until the user explicitly enables another provider.
 
 ## Visual language
 
@@ -245,7 +245,7 @@ require("familiar").setup({
 
 ## Optional AI providers
 
-The embedded `local_llama` provider is the default brain configuration. If the model or compatible sidecar is unavailable, the deterministic engine remains fully functional and retains final control over safety, placement, mode handling, animation, and the allowed action set. Network-backed providers remain explicit opt-ins.
+RuleBrain is the default. Local and network-backed AI providers are explicit opt-ins. The deterministic engine always retains final control over safety, placement, mode handling, animation, and the allowed action set.
 
 ### Embedded local model
 
@@ -255,7 +255,7 @@ Build with `--features local-llama`, then explicitly download the managed refere
 :FamiliarBrainInstall
 ```
 
-The current reference is **SmolLM2-135M-Instruct Q4_K_M**, about 105 MB, Apache-2.0. The download is SHA-256 verified before installation.
+The current reference is **SmolLM2-135M-Instruct Q4_K_M**, about 105 MB, Apache-2.0. The download is SHA-256 verified before installation and stored under `stdpath("data")/familiar/models/` unless `brain.local_model.model_path` is explicitly overridden.
 
 ```lua
 require("familiar").setup({

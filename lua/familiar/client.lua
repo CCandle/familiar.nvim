@@ -37,7 +37,6 @@ local function resolve_binary(config)
   local root = plugin_root()
   if not root then return nil end
   local candidates = {
-    root .. "/target/llama/release/familiar-core",
     root .. "/target/release/familiar-core",
     root .. "/target/debug/familiar-core",
   }

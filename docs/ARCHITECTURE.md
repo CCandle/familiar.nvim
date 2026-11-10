@@ -9,7 +9,7 @@ The system has four cooperating layers:
 1. **Presentation** — deterministic time-domain motion, expression, effects, and rendering.
 2. **World** — editor/workspace state, spatial occupancy, semantic events, and memory.
 3. **Behavior** — deterministic state machine, mode policy, cooldowns, personality state, and safe action selection.
-4. **Brain** — optional low-frequency policy provider. `RuleBrain` is always available; AI providers may later choose among already-safe semantic actions.
+4. **Brain** — optional low-frequency policy provider. `RuleBrain` is always available; enabled AI providers may choose among already-safe semantic actions.
 
 No model controls animation frames, raw coordinates, arbitrary commands, or free-form visible glyph strings.
 
@@ -151,7 +151,7 @@ A safe-placement pass currently uses:
 - skin dimensions;
 - configured margin.
 
-The current implementation prefers empty space to the right of visible text and can produce multiple safe candidates. Animated relocation is allowed only when every sampled screen cell on the route remains safe; otherwise the familiar uses its vanish/appear transition. Text changes invalidate placement, and unsafe trail cells are suppressed. Future occupancy can include folds, other floats, UI-reserved areas, and selection-aware zones.
+The current implementation prefers empty space to the right of visible text and can produce multiple safe candidates. Relocation first performs a route preflight over the quantized screen path; an unsafe route uses the vanish/appear transition instead. The renderer then independently validates the **actual quantized cell immediately before each draw**. That final-frame check reuses cached occupancy and is therefore cheap at 60/120 FPS. Text, diagnostic, scroll, and resize events invalidate the cached occupancy, and unsafe trail cells are suppressed. Future occupancy can include folds, other floats, UI-reserved areas, and selection-aware zones.
 
 ### Stickiness
 
@@ -206,7 +206,7 @@ Aggregated from events:
 
 ### Brain tick
 
-Any future AI provider runs only on meaningful semantic events or a low-frequency policy tick. It never runs per keypress, motion tick, or animation frame.
+An enabled AI provider runs only on meaningful semantic events or a low-frequency policy tick. It never runs per keypress, motion tick, or animation frame.
 
 ## Text work is first-class
 
@@ -220,19 +220,18 @@ A sustained writing session should generally make the familiar **quieter**, not 
 
 ## AI boundary
 
-The future AI architecture is provider-based and opt-in:
+The current AI architecture is provider-based and opt-in:
 
 ```text
-RuleBrain (mandatory)
+RuleBrain (mandatory, default)
 optional local llama.cpp/GGUF
 optional Ollama
 optional OpenAI-compatible endpoint
-optional custom adapter
 ```
 
 The deterministic layer first computes an eligible action set using safety, nuisance limits, cooldowns, mode policy, and presentation state. An AI provider may choose only among those actions.
 
-A provider receives a compact structured snapshot and returns schema-valid semantic intent. It cannot invent visible skin strings, arbitrary screen coordinates, commands, or executable behavior.
+A provider receives a compact structured snapshot and returns a validated semantic behavior choice. It cannot invent visible skin strings, arbitrary screen coordinates, commands, or executable behavior.
 
 See [`BRAIN.md`](BRAIN.md).
 
@@ -243,6 +242,7 @@ The familiar is decoration, so it receives a strict budget:
 - active spatial motion defaults to 60 FPS; 120 FPS is optional, 30 FPS is economy;
 - high refresh rate does **not** imply high-frequency full content redraw;
 - terminal-cell-quantized duplicate position updates are skipped;
+- final-frame spatial safety uses cached occupancy rather than rescanning the buffer each motion tick;
 - idle expression is event/keyframe driven, not a permanent high-FPS loop;
 - hidden state performs only low-frequency semantic tracking;
 - no AI inference during high-rate typing unless a major event explicitly warrants it;

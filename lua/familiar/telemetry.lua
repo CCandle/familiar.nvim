@@ -1,3 +1,5 @@
+local ui_safety = require("familiar.ui_safety")
+
 local M = {}
 
 local state = {
@@ -112,11 +114,20 @@ function M.setup(config, on_event)
   state.on_event = on_event
   state.group = vim.api.nvim_create_augroup("FamiliarTelemetry", { clear = true })
 
+  ui_safety.start(function(args)
+    emit("text_changed", args)
+  end)
+
   vim.api.nvim_create_autocmd("InsertCharPre", {
     group = state.group,
     callback = function(args)
       touch(true)
-      emit("typing", args)
+      -- InsertCharPre 运行在 textlock 中，同步 emit 会让 renderer.draw 改 buffer
+      -- 时报 E565；推迟到下一次事件循环再派发 typing 事件。
+      local event = { event = args.event, buf = args.buf }
+      vim.schedule(function()
+        emit("typing", event)
+      end)
     end,
   })
 
@@ -156,6 +167,7 @@ function M.setup(config, on_event)
 end
 
 function M.stop()
+  ui_safety.stop()
   if state.group then pcall(vim.api.nvim_del_augroup_by_id, state.group) end
   state.group = nil
   state.on_event = nil
