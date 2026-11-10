@@ -122,7 +122,12 @@ function M.setup(config, on_event)
     group = state.group,
     callback = function(args)
       touch(true)
-      emit("typing", args)
+      -- InsertCharPre 运行在 textlock 中，同步 emit 会让 renderer.draw 改 buffer
+      -- 时报 E565；推迟到下一次事件循环再派发 typing 事件。
+      local event = { event = args.event, buf = args.buf }
+      vim.schedule(function()
+        emit("typing", event)
+      end)
     end,
   })
 
